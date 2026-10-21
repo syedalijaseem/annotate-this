@@ -16,6 +16,10 @@ export interface Limits {
   maxDocumentBytes: number
   /** Maximum decoded pixels of any single mask. */
   maxMaskPixels: number
+  /** Maximum values in the whole input (strings, booleans, null, objects, arrays and keys; plain numbers are free). */
+  maxDocumentNodes: number
+  /** Maximum keys in any one object, and so the largest record the document can hold. */
+  maxEntries: number
 }
 
 export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
@@ -27,6 +31,8 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   maxMetaDepth: 32,
   maxDocumentBytes: 64 * 1024 * 1024,
   maxMaskPixels: 268_435_456,
+  maxDocumentNodes: 3_000_000,
+  maxEntries: 100_000,
 })
 
 export function resolveLimits(overrides: Partial<Limits> = {}): Limits {

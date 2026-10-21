@@ -21,8 +21,9 @@ export function nestingDepth(value: unknown, limit: number): number {
 
 const isPlainContainer = (value: object): boolean => {
   if (Array.isArray(value)) return true
-  const prototype = Object.getPrototypeOf(value) as unknown
-  return prototype === Object.prototype || prototype === null
+  const prototype = Object.getPrototypeOf(value) as object | null
+  // Any realm's Object.prototype has a null prototype, so cross-realm plain objects pass.
+  return prototype === null || Object.getPrototypeOf(prototype) === null
 }
 
 const isJsonScalar = (value: unknown): boolean =>
@@ -50,3 +51,44 @@ export function isPlainJson(value: unknown): boolean {
   }
   return true
 }
+
+export interface InputBudget {
+  /** Deepest allowed nesting of objects and arrays. */
+  depth: number
+  nodes: number
+  entries: number
+}
+
+export type BudgetBreach = "depth" | "nodes" | "entries"
+
+/**
+ * Walks the input once, iteratively, and reports the first budget it exceeds.
+ * Counts every key, container and non-number value as a node: plain numbers
+ * are free so large coordinate arrays are bounded by the vertex limits instead.
+ * The walk stops at the first breach, so a hostile input costs at most the budget.
+ */
+export function findBudgetBreach(value: unknown, budget: InputBudget): BudgetBreach | null {
+  let nodes = 0
+  const stack: [unknown, number][] = [[value, 1]]
+  while (stack.length > 0) {
+    const [current, depth] = stack.pop() as [unknown, number]
+    if (typeof current !== "object" || current === null) continue
+    if (depth > budget.depth) return "depth"
+    nodes += 1
+    const isArray = Array.isArray(current)
+    const children: unknown[] = isArray ? current : Object.values(current)
+    if (!isArray) {
+      if (children.length > budget.entries) return "entries"
+      nodes += children.length
+    }
+    for (const child of children) {
+      if (typeof child === "object" && child !== null) stack.push([child, depth + 1])
+      else if (typeof child !== "number") nodes += 1
+    }
+    if (nodes > budget.nodes) return "nodes"
+  }
+  return null
+}
+
+/** Beyond free-form JSON, the document's own structure nests this deep at most. */
+export const STRUCTURE_DEPTH_ALLOWANCE = 32

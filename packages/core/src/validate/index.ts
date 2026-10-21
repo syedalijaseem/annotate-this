@@ -3,7 +3,7 @@ import { AnnotateError, type ErrorIssue } from "../errors.js"
 import { type Limits, resolveLimits } from "../limits.js"
 import { DocumentSchema, SCHEMA_MAJOR } from "../schema/document.js"
 import type { AnnotationDocument } from "../types.js"
-import { isPlainJson, nestingDepth } from "./depth.js"
+import { STRUCTURE_DEPTH_ALLOWANCE, findBudgetBreach, isPlainJson } from "./depth.js"
 import { checkGeometryRules } from "./geometry-rules.js"
 import { checkIdentity, checkOrders } from "./identity.js"
 import { type Issue, clip } from "./issues.js"
@@ -21,11 +21,14 @@ export interface ParseOptions {
   limits?: Partial<Limits>
 }
 
-/** Beyond free-form JSON, the document's own structure nests this deep at most. */
-const STRUCTURE_DEPTH_ALLOWANCE = 32
-
 const countKeys = (value: unknown): number =>
   typeof value === "object" && value !== null ? Object.keys(value).length : 0
+
+const BREACH_MESSAGES = {
+  depth: () => "Nesting is too deep to validate",
+  nodes: (limits: Limits) => `More than ${limits.maxDocumentNodes} values in the document`,
+  entries: (limits: Limits) => `An object has more than ${limits.maxEntries} keys`,
+} as const
 
 /** Cheap checks that run before the schema walks the whole input. */
 function guardShape(input: unknown, limits: Limits): void {
@@ -42,10 +45,15 @@ function guardShape(input: unknown, limits: Limits): void {
       },
     )
   }
-  const allowed = limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE
-  if (nestingDepth(input, allowed) > allowed) {
-    throw new AnnotateError("LIMIT_EXCEEDED", "document: nesting is too deep to validate", {
-      issues: [{ path: "document", message: "Nesting is too deep to validate" }],
+  const breach = findBudgetBreach(input, {
+    depth: limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE,
+    nodes: limits.maxDocumentNodes,
+    entries: limits.maxEntries,
+  })
+  if (breach !== null) {
+    const message = BREACH_MESSAGES[breach](limits)
+    throw new AnnotateError("LIMIT_EXCEEDED", `document: ${message}`, {
+      issues: [{ path: "document", message }],
     })
   }
   if (!isPlainJson(input)) {

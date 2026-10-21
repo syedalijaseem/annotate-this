@@ -36,6 +36,9 @@ export const MAX_LIST_LENGTH = 1000
 /** Hard cap on mask run counts: bounds memory before the pixel-sum check runs. */
 export const MAX_MASK_RUNS = 4_000_000
 
+/** Hard cap on one flat coordinate array: bounds work before the configurable vertex limits run. */
+export const MAX_COORDINATES = 8_000_000
+
 /** Hard cap on the length of a custom geometry kind ("vendor:name"). */
 export const MAX_CUSTOM_KIND_LENGTH = 256
 
@@ -76,7 +79,11 @@ export const ColorSchema: GenericSchema<unknown, string> = pipe(
 function rejectForbiddenKeys(): ReturnType<typeof rawCheck<unknown>> {
   return rawCheck(({ dataset, addIssue }) => {
     const input = dataset.value
-    if (typeof input !== "object" || input === null || Array.isArray(input)) return
+    if (Array.isArray(input)) {
+      addIssue({ message: "Expected an object but received an array" })
+      return
+    }
+    if (typeof input !== "object" || input === null) return
     for (const key of Object.keys(input)) {
       if (FORBIDDEN_KEYS.has(key)) addIssue({ message: `Forbidden key "${key}"` })
     }

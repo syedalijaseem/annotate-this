@@ -48,3 +48,6 @@ export function clip(text: string, max = 64): string {
 export function pushAll<T>(target: T[], items: readonly T[]): void {
   for (const item of items) target.push(item)
 }
+
+/** Checks stop collecting after this many issues: only the first few are ever reported. */
+export const MAX_ISSUES_PER_CHECK = 100

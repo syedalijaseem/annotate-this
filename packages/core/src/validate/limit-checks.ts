@@ -2,7 +2,7 @@ import { largestRun, vertexCount } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
 import type { AnnotationDocument, JSONValue, Track } from "../types.js"
 import { nestingDepth } from "./depth.js"
-import { type Issue, issue, walkGeometries } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, walkGeometries } from "./issues.js"
 
 function metaIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const holders: [string, JSONValue][] = [
@@ -68,7 +68,7 @@ function configStringIssues(doc: AnnotationDocument, check: StringCheck, limits:
 function stringIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const issues: Issue[] = []
   const check: StringCheck = (path, value, max) => {
-    if (value !== undefined && value.length > max)
+    if (issues.length < MAX_ISSUES_PER_CHECK && value !== undefined && value.length > max)
       issues.push(issue("LIMIT_EXCEEDED", path, `Text is longer than ${max} characters`))
   }
   check("config.taskDescription", doc.config.taskDescription, limits.maxCommentLength)

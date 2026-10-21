@@ -1,6 +1,6 @@
 import { DEFAULT_STATUSES } from "../schema/config.js"
 import type { AnnotationBase, AnnotationDocument } from "../types.js"
-import { type Issue, clip, issue, pushAll, walkGeometries } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, clip, issue, pushAll, walkGeometries } from "./issues.js"
 
 /** Detects cycles in a parent graph in linear time (three-colour depth-first walk). */
 function findCycles(parents: ReadonlyMap<string, string>): string[] {
@@ -20,10 +20,23 @@ function findCycles(parents: ReadonlyMap<string, string>): string[] {
   return cyclic
 }
 
+const statusSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+/** Statuses are looked up once per annotation, so build the Set once per list. */
+function statusSet(statuses: readonly string[]): ReadonlySet<string> {
+  let set = statusSets.get(statuses)
+  if (!set) {
+    set = new Set(statuses)
+    statusSets.set(statuses, set)
+  }
+  return set
+}
+
 function tagIssues(doc: AnnotationDocument, path: string, tagIds: readonly string[]): Issue[] {
   const issues: Issue[] = []
   const seen = new Set<string>()
   for (const tagId of tagIds) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) return issues
     if (!(tagId in doc.config.tags))
       issues.push(issue("INVALID_DOCUMENT", path, `Unknown tag "${tagId}"`))
     else if (seen.has(tagId))
@@ -57,7 +70,7 @@ function annotationRefs(
       )
     }
   }
-  if (!(doc.config.statuses ?? DEFAULT_STATUSES).includes(a.status)) {
+  if (!statusSet(doc.config.statuses ?? DEFAULT_STATUSES).has(a.status)) {
     issues.push(
       issue(
         "INVALID_DOCUMENT",
@@ -98,6 +111,7 @@ function configRefs(doc: AnnotationDocument): Issue[] {
         )
     }
     for (const key of def.attributeKeys ?? []) {
+      if (issues.length >= MAX_ISSUES_PER_CHECK) break
       if (!(key in doc.config.attributes)) {
         issues.push(
           issue(
@@ -113,6 +127,7 @@ function configRefs(doc: AnnotationDocument): Issue[] {
     issues.push(issue("CYCLE", `config.classes.${id}.parentId`, "Class hierarchy contains a cycle"))
   for (const [id, skeleton] of Object.entries(doc.config.skeletons)) {
     for (const [a, b] of skeleton.edges) {
+      if (issues.length >= MAX_ISSUES_PER_CHECK) break
       if (a >= skeleton.points.length || b >= skeleton.points.length) {
         issues.push(
           issue(

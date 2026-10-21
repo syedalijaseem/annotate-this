@@ -9,6 +9,7 @@ import {
   pipe,
   picklist,
   string,
+  unknown,
   variant,
 } from "valibot"
 import type { Geometry } from "../types.js"
@@ -16,12 +17,19 @@ import {
   IdSchema,
   IntSchema,
   JsonSchema,
+  MAX_COORDINATES,
   MAX_CUSTOM_KIND_LENGTH,
   MAX_MASK_RUNS,
   NonNegativeSchema,
   NumSchema,
   PositiveIntSchema,
 } from "./primitives.js"
+
+/** Runs before the items are validated, so an enormous array is refused without walking it. */
+const withinCoordinateCap = check(
+  (value: unknown) => !Array.isArray(value) || value.length <= MAX_COORDINATES,
+  "Too many coordinates",
+)
 
 const evenLength = (values: number[]) => values.length % 2 === 0
 
@@ -51,6 +59,8 @@ const PointSchema = looseObject({
 /** A flat coordinate list with an even length and at least `minPoints` points. */
 const flatCoordinates = (minPoints: number) =>
   pipe(
+    unknown(),
+    withinCoordinateCap,
     array(NumSchema),
     check(evenLength, "Coordinates must come in x,y pairs"),
     minLength(minPoints * 2, `At least ${minPoints} points are required`),
@@ -70,6 +80,8 @@ const KeypointsSchema = looseObject({
   type: literal("keypoints"),
   skeletonId: IdSchema,
   points: pipe(
+    unknown(),
+    withinCoordinateCap,
     array(NumSchema),
     check(
       (values: number[]) => values.length % 3 === 0,

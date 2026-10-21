@@ -1,5 +1,17 @@
 import type { AnnotationDocument, AttributeDef, AttributeValue, GeometryType } from "../types.js"
-import { type Issue, issue, pushAll } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
+
+const optionSets = new WeakMap<AttributeDef, ReadonlySet<string>>()
+
+/** One Set per definition, so enum checks do not scan up to 1000 options per value. */
+function optionSet(def: AttributeDef): ReadonlySet<string> {
+  let set = optionSets.get(def)
+  if (!set) {
+    set = new Set(def.options ?? [])
+    optionSets.set(def, set)
+  }
+  return set
+}
 
 function attributeProblem(def: AttributeDef, value: AttributeValue): string | null {
   switch (def.type) {
@@ -8,7 +20,7 @@ function attributeProblem(def: AttributeDef, value: AttributeValue): string | nu
     case "boolean":
       return typeof value === "boolean" ? null : "expected a boolean"
     case "enum":
-      return typeof value === "string" && (def.options ?? []).includes(value)
+      return typeof value === "string" && optionSet(def).has(value)
         ? null
         : "expected one of the listed options"
     case "number":
@@ -26,6 +38,7 @@ function attributeIssues(
 ): Issue[] {
   const issues: Issue[] = []
   for (const [key, value] of Object.entries(attributes)) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) break
     const def = doc.config.attributes[key]
     if (!def) {
       issues.push(issue("ATTRIBUTE_INVALID", `${path}.${key}`, `Unknown attribute "${key}"`))

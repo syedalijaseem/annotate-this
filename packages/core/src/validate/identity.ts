@@ -1,5 +1,5 @@
 import type { AnnotationDocument } from "../types.js"
-import { type Issue, issue, pushAll } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
 
 type Keyed = Record<string, { id: string }>
 
@@ -60,6 +60,7 @@ export function permutationIssues(
   const issues: Issue[] = []
   const seen = new Set<string>()
   for (const id of order) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) return issues
     if (seen.has(id))
       issues.push(issue("INVALID_DOCUMENT", path, `"${id}" is listed more than once`))
     else if (!expected.has(id))
@@ -67,6 +68,7 @@ export function permutationIssues(
     seen.add(id)
   }
   for (const id of expected) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) return issues
     if (!seen.has(id))
       issues.push(issue("INVALID_DOCUMENT", path, `"${id}" is missing from the order`))
   }
