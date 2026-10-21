@@ -46,7 +46,8 @@ function tagIssues(doc: AnnotationDocument, path: string, tagIds: readonly strin
   return issues
 }
 
-function annotationRefs(
+/** References of one region or track: source, class, tags, parent and status. */
+export function annotationRefs(
   doc: AnnotationDocument,
   kind: "regions" | "tracks",
   id: string,

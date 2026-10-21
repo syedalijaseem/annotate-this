@@ -1,6 +1,6 @@
 import { largestRun, vertexCount } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
-import type { AnnotationDocument, JSONValue, Track } from "../types.js"
+import type { AnnotationDocument, JSONValue, Region, Track } from "../types.js"
 import { nestingDepth } from "./depth.js"
 import { type Issue, MAX_ISSUES_PER_CHECK, issue, walkGeometries } from "./issues.js"
 
@@ -65,6 +65,73 @@ function configStringIssues(doc: AnnotationDocument, check: StringCheck, limits:
   for (const tool of doc.config.tools ?? []) check("config.tools", tool, max)
 }
 
+function annotationStrings(
+  check: StringCheck,
+  at: string,
+  a: Region | Track,
+  limits: Limits,
+): void {
+  const text = limits.maxStringLength
+  check(`${at}.comment`, a.comment, limits.maxCommentLength)
+  check(`${at}.status`, a.status, text)
+  check(`${at}.provenance.createdBy`, a.provenance.createdBy, text)
+  if (a.provenance.source !== "manual") {
+    check(`${at}.provenance.source.model`, a.provenance.source.model, text)
+    check(`${at}.provenance.source.version`, a.provenance.source.version, text)
+  }
+  attributeStrings(check, `${at}.attributes`, a.attributes, text)
+}
+
+/** Text, `meta` depth and shape-size limits for one region or track. */
+export function annotationLimitIssues(
+  kind: "regions" | "tracks",
+  a: Region | Track,
+  limits: Limits,
+): Issue[] {
+  const at = `${kind}.${a.id}`
+  const issues: Issue[] = []
+  const check: StringCheck = (path, value, max) => {
+    if (value !== undefined && value.length > max)
+      issues.push(issue("LIMIT_EXCEEDED", path, `Text is longer than ${max} characters`))
+  }
+  annotationStrings(check, at, a, limits)
+  if (nestingDepth(a.meta, limits.maxMetaDepth) > limits.maxMetaDepth) {
+    issues.push(
+      issue(
+        "LIMIT_EXCEEDED",
+        `${at}.meta`,
+        `Value is nested deeper than ${limits.maxMetaDepth} levels`,
+      ),
+    )
+  }
+  const geometries =
+    kind === "regions" ? [(a as Region).geometry] : (a as Track).keyframes.map((k) => k.geometry)
+  for (const geometry of geometries) {
+    if (largestRun(geometry) > limits.maxVerticesPerShape) {
+      issues.push(
+        issue(
+          "LIMIT_EXCEEDED",
+          `${at}.geometry`,
+          `More than ${limits.maxVerticesPerShape} vertices in one ring or line`,
+        ),
+      )
+    }
+    if (
+      geometry.type === "custom" &&
+      nestingDepth(geometry.data, limits.maxMetaDepth) > limits.maxMetaDepth
+    ) {
+      issues.push(
+        issue(
+          "LIMIT_EXCEEDED",
+          `${at}.geometry.data`,
+          `Value is nested deeper than ${limits.maxMetaDepth} levels`,
+        ),
+      )
+    }
+  }
+  return issues
+}
+
 function stringIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const issues: Issue[] = []
   const check: StringCheck = (path, value, max) => {
@@ -85,17 +152,7 @@ function stringIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
     ...Object.entries(doc.regions).map(([id, a]): [string, string, typeof a] => ["regions", id, a]),
     ...Object.entries(doc.tracks).map(([id, a]): [string, string, typeof a] => ["tracks", id, a]),
   ]
-  for (const [kind, id, a] of annotations) {
-    const at = `${kind}.${id}`
-    check(`${at}.comment`, a.comment, limits.maxCommentLength)
-    check(`${at}.status`, a.status, text)
-    check(`${at}.provenance.createdBy`, a.provenance.createdBy, text)
-    if (a.provenance.source !== "manual") {
-      check(`${at}.provenance.source.model`, a.provenance.source.model, text)
-      check(`${at}.provenance.source.version`, a.provenance.source.version, text)
-    }
-    attributeStrings(check, `${at}.attributes`, a.attributes, text)
-  }
+  for (const [kind, id, a] of annotations) annotationStrings(check, `${kind}.${id}`, a, limits)
   configStringIssues(doc, check, limits)
   return issues
 }

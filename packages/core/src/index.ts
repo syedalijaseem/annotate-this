@@ -21,3 +21,28 @@ export { parseDocumentJson, utf8ByteLength } from "./validate/json.js"
 
 export { createDocument } from "./create-document.js"
 export type { CreateDocumentInput, ImageInput, LabelInput } from "./create-document.js"
+
+export { apply } from "./ops/apply.js"
+export type {
+  ApplyOptions,
+  ApplyResult,
+  AttributesPatch,
+  Batch,
+  BatchOrigin,
+  ChangeSet,
+  ChildPolicy,
+  CreateRegionOp,
+  DeleteRegionOp,
+  MetaPatch,
+  MoveRegionToSourceOp,
+  NewRegion,
+  Operation,
+  OperationBase,
+  OperationType,
+  PatchRegionOp,
+  Position,
+  RegionPatch,
+  ReorderRegionOp,
+  SetDocumentMetaOp,
+  SetGeometryOp,
+} from "./ops/types.js"

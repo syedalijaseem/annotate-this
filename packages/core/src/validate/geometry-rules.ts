@@ -1,7 +1,7 @@
 import { type Bounds, boundsWithin, geometryBounds } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
 import type { AnnotationDocument, BoxGeometry, Geometry } from "../types.js"
-import { type Issue, issue, walkGeometries } from "./issues.js"
+import { type Issue, issue, pushAll, walkGeometries } from "./issues.js"
 
 /** Slack for coordinates that land a rounding error outside the image. */
 const BOUNDS_TOLERANCE = 0.5
@@ -67,13 +67,21 @@ function areaRules(
   return []
 }
 
+/** Shape and area rules for one geometry. */
+export function geometryIssues(
+  geometry: Geometry,
+  path: string,
+  sourceId: string,
+  doc: AnnotationDocument,
+  limits: Limits,
+): Issue[] {
+  return [...shapeRules(geometry, path, doc, limits), ...areaRules(geometry, path, sourceId, doc)]
+}
+
 export function checkGeometryRules(doc: AnnotationDocument, limits: Limits): Issue[] {
   const issues: Issue[] = []
   for (const { geometry, path, sourceId } of walkGeometries(doc)) {
-    issues.push(
-      ...shapeRules(geometry, path, doc, limits),
-      ...areaRules(geometry, path, sourceId, doc),
-    )
+    pushAll(issues, geometryIssues(geometry, path, sourceId, doc, limits))
   }
   return issues
 }

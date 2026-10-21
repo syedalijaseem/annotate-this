@@ -31,7 +31,7 @@ function attributeProblem(def: AttributeDef, value: AttributeValue): string | nu
   }
 }
 
-function attributeIssues(
+export function attributeIssues(
   doc: AnnotationDocument,
   path: string,
   attributes: Record<string, AttributeValue>,
@@ -51,7 +51,7 @@ function attributeIssues(
   return issues
 }
 
-function classGeometryIssue(
+export function classGeometryIssue(
   doc: AnnotationDocument,
   path: string,
   classId: string | undefined,
