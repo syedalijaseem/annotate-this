@@ -16,6 +16,7 @@ import {
   IdSchema,
   IntSchema,
   JsonSchema,
+  MAX_CUSTOM_KIND_LENGTH,
   MAX_MASK_RUNS,
   NonNegativeSchema,
   NumSchema,
@@ -95,6 +96,7 @@ const CustomSchema = looseObject({
   type: literal("custom"),
   kind: pipe(
     string(),
+    maxLength(MAX_CUSTOM_KIND_LENGTH),
     check(
       (value) => /^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$/.test(value),
       'Custom kind must look like "vendor:name"',

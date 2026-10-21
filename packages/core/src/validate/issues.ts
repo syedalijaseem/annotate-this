@@ -43,3 +43,8 @@ export function* walkGeometries(doc: AnnotationDocument): Generator<GeometryVisi
 export function clip(text: string, max = 64): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
+
+/** Appends without spreading: `push(...items)` overflows the call stack for very large arrays. */
+export function pushAll<T>(target: T[], items: readonly T[]): void {
+  for (const item of items) target.push(item)
+}

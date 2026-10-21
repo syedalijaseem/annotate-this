@@ -1,5 +1,5 @@
 import type { AnnotationDocument } from "../types.js"
-import { type Issue, issue } from "./issues.js"
+import { type Issue, issue, pushAll } from "./issues.js"
 
 type Keyed = Record<string, { id: string }>
 
@@ -101,20 +101,14 @@ export function checkOrders(doc: AnnotationDocument): Issue[] {
   const tracksOf = idsBySource(doc.tracks)
   const none = new Set<string>()
   for (const [id, source] of Object.entries(doc.sources)) {
-    issues.push(
-      ...permutationIssues(
-        `sources.${id}.regionOrder`,
-        source.regionOrder,
-        regionsOf.get(id) ?? none,
-      ),
+    pushAll(
+      issues,
+      permutationIssues(`sources.${id}.regionOrder`, source.regionOrder, regionsOf.get(id) ?? none),
     )
     if (source.kind === "video") {
-      issues.push(
-        ...permutationIssues(
-          `sources.${id}.trackOrder`,
-          source.trackOrder,
-          tracksOf.get(id) ?? none,
-        ),
+      pushAll(
+        issues,
+        permutationIssues(`sources.${id}.trackOrder`, source.trackOrder, tracksOf.get(id) ?? none),
       )
     }
   }

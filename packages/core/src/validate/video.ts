@@ -1,5 +1,5 @@
 import type { AnnotationDocument, Track, VideoSource } from "../types.js"
-import { type Issue, issue } from "./issues.js"
+import { type Issue, issue, pushAll } from "./issues.js"
 
 function sourceRules(id: string, source: VideoSource): Issue[] {
   const issues: Issue[] = []
@@ -78,11 +78,11 @@ function regionFrameRules(doc: AnnotationDocument): Issue[] {
 export function checkVideo(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = regionFrameRules(doc)
   for (const [id, source] of Object.entries(doc.sources)) {
-    if (source.kind === "video") issues.push(...sourceRules(id, source))
+    if (source.kind === "video") pushAll(issues, sourceRules(id, source))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
     const source = doc.sources[track.sourceId]
-    if (source?.kind === "video") issues.push(...trackRules(id, track, source.frameCount))
+    if (source?.kind === "video") pushAll(issues, trackRules(id, track, source.frameCount))
   }
   return issues
 }

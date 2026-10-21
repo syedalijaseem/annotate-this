@@ -1,5 +1,5 @@
 import type { AnnotationDocument, AttributeDef, AttributeValue, GeometryType } from "../types.js"
-import { type Issue, issue } from "./issues.js"
+import { type Issue, issue, pushAll } from "./issues.js"
 
 function attributeProblem(def: AttributeDef, value: AttributeValue): string | null {
   switch (def.type) {
@@ -94,17 +94,17 @@ function duplicateAttributeKeys(doc: AnnotationDocument): Issue[] {
 export function checkLabels(doc: AnnotationDocument): Issue[] {
   const issues = [...attributeDefKeys(doc), ...duplicateAttributeKeys(doc)]
   for (const [key, def] of Object.entries(doc.config.attributes))
-    issues.push(...attributeDefProblems(key, def))
+    pushAll(issues, attributeDefProblems(key, def))
   for (const [id, source] of Object.entries(doc.sources)) {
-    issues.push(...attributeIssues(doc, `sources.${id}.attributes`, source.attributes))
+    pushAll(issues, attributeIssues(doc, `sources.${id}.attributes`, source.attributes))
   }
   for (const [id, region] of Object.entries(doc.regions)) {
-    issues.push(...attributeIssues(doc, `regions.${id}.attributes`, region.attributes))
-    issues.push(...classGeometryIssue(doc, `regions.${id}`, region.classId, region.geometry.type))
+    pushAll(issues, attributeIssues(doc, `regions.${id}.attributes`, region.attributes))
+    pushAll(issues, classGeometryIssue(doc, `regions.${id}`, region.classId, region.geometry.type))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
-    issues.push(...attributeIssues(doc, `tracks.${id}.attributes`, track.attributes))
-    issues.push(...classGeometryIssue(doc, `tracks.${id}`, track.classId, track.geometryType))
+    pushAll(issues, attributeIssues(doc, `tracks.${id}.attributes`, track.attributes))
+    pushAll(issues, classGeometryIssue(doc, `tracks.${id}`, track.classId, track.geometryType))
   }
   return issues
 }

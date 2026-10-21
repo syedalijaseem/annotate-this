@@ -1,6 +1,6 @@
 import { DEFAULT_STATUSES } from "../schema/config.js"
 import type { AnnotationBase, AnnotationDocument } from "../types.js"
-import { type Issue, clip, issue, walkGeometries } from "./issues.js"
+import { type Issue, clip, issue, pushAll, walkGeometries } from "./issues.js"
 
 /** Detects cycles in a parent graph in linear time (three-colour depth-first walk). */
 function findCycles(parents: ReadonlyMap<string, string>): string[] {
@@ -46,7 +46,7 @@ function annotationRefs(
   if (a.classId !== undefined && !(a.classId in doc.config.classes)) {
     issues.push(issue("INVALID_DOCUMENT", `${at}.classId`, `Unknown class "${a.classId}"`))
   }
-  issues.push(...tagIssues(doc, `${at}.tagIds`, a.tagIds))
+  pushAll(issues, tagIssues(doc, `${at}.tagIds`, a.tagIds))
   if (a.parentId !== undefined) {
     const parent = doc.regions[a.parentId] ?? doc.tracks[a.parentId]
     if (!parent)
@@ -77,7 +77,7 @@ function sourceRefs(doc: AnnotationDocument): Issue[] {
         issue("INVALID_DOCUMENT", `sources.${id}.classId`, `Unknown class "${source.classId}"`),
       )
     }
-    issues.push(...tagIssues(doc, `sources.${id}.tagIds`, source.tagIds))
+    pushAll(issues, tagIssues(doc, `sources.${id}.tagIds`, source.tagIds))
   }
   return issues
 }
@@ -131,11 +131,11 @@ function annotationGraph(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = []
   const parents = new Map<string, string>()
   for (const [id, region] of Object.entries(doc.regions)) {
-    issues.push(...annotationRefs(doc, "regions", id, region))
+    pushAll(issues, annotationRefs(doc, "regions", id, region))
     if (region.parentId !== undefined) parents.set(id, region.parentId)
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
-    issues.push(...annotationRefs(doc, "tracks", id, track))
+    pushAll(issues, annotationRefs(doc, "tracks", id, track))
     if (track.parentId !== undefined) parents.set(id, track.parentId)
     if (doc.sources[track.sourceId]?.kind === "image") {
       issues.push(
