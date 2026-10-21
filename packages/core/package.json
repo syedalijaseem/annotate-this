@@ -40,7 +40,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:package": "publint && attw --pack . --profile esm-only",
-    "check:size": "size-limit"
+    "check:size": "size-limit",
+    "coverage": "vitest run --coverage",
+    "test:csp": "node --disallow-code-generation-from-strings ./node_modules/vitest/vitest.mjs run"
   },
   "size-limit": [
     {
@@ -52,9 +54,14 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@size-limit/file": "^14.2.0",
+    "@valibot/to-json-schema": "^1.8.0",
+    "@vitest/coverage-v8": "5.0.5",
     "publint": "^0.3.25",
     "size-limit": "^14.2.0",
     "tsdown": "^0.23.1",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "valibot": "^1.5.0"
   }
 }

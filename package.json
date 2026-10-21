@@ -18,7 +18,7 @@
     "build": "pnpm -r --workspace-concurrency=1 build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "eslint .",
+    "lint": "eslint . --ignore-pattern docs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:package": "pnpm -r check:package",
