@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No DOM types on purpose: the core must run in Node and workers (ADR 0003).
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src", "test", "tsdown.config.ts", "vitest.config.ts"]
+}
