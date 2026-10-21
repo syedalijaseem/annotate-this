@@ -1,6 +1,6 @@
 import { DEFAULT_STATUSES } from "../schema/config.js"
 import type { AnnotationBase, AnnotationDocument } from "../types.js"
-import { type Issue, issue, walkGeometries } from "./issues.js"
+import { type Issue, clip, issue, walkGeometries } from "./issues.js"
 
 /** Detects cycles in a parent graph in linear time (three-colour depth-first walk). */
 function findCycles(parents: ReadonlyMap<string, string>): string[] {
@@ -59,7 +59,11 @@ function annotationRefs(
   }
   if (!(doc.config.statuses ?? DEFAULT_STATUSES).includes(a.status)) {
     issues.push(
-      issue("INVALID_DOCUMENT", `${at}.status`, `Status "${a.status}" is not an allowed status`),
+      issue(
+        "INVALID_DOCUMENT",
+        `${at}.status`,
+        `Status "${clip(a.status)}" is not an allowed status`,
+      ),
     )
   }
   return issues

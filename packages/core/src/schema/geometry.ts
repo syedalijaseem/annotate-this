@@ -4,6 +4,7 @@ import {
   check,
   literal,
   looseObject,
+  maxLength,
   minLength,
   pipe,
   picklist,
@@ -15,6 +16,7 @@ import {
   IdSchema,
   IntSchema,
   JsonSchema,
+  MAX_MASK_RUNS,
   NonNegativeSchema,
   NumSchema,
   PositiveIntSchema,
@@ -86,7 +88,7 @@ const MaskSchema = looseObject({
   y: NumSchema,
   width: PositiveIntSchema,
   height: PositiveIntSchema,
-  counts: array(IntSchema),
+  counts: pipe(array(IntSchema), maxLength(MAX_MASK_RUNS)),
 })
 
 const CustomSchema = looseObject({

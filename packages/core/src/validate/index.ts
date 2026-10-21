@@ -21,7 +21,24 @@ export interface ParseOptions {
 /** Beyond free-form JSON, the document's own structure nests this deep at most. */
 const STRUCTURE_DEPTH_ALLOWANCE = 32
 
-function guardDepth(input: unknown, limits: Limits): void {
+const countKeys = (value: unknown): number =>
+  typeof value === "object" && value !== null ? Object.keys(value).length : 0
+
+/** Cheap checks that run before the schema walks the whole input. */
+function guardShape(input: unknown, limits: Limits): void {
+  const fields = (typeof input === "object" && input !== null ? input : {}) as Record<
+    string,
+    unknown
+  >
+  if (countKeys(fields.regions) + countKeys(fields.tracks) > limits.maxAnnotations) {
+    throw new AnnotateError(
+      "LIMIT_EXCEEDED",
+      `regions: More than ${limits.maxAnnotations} annotations`,
+      {
+        issues: [{ path: "regions", message: `More than ${limits.maxAnnotations} annotations` }],
+      },
+    )
+  }
   const allowed = limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE
   if (nestingDepth(input, allowed) > allowed) {
     throw new AnnotateError("LIMIT_EXCEEDED", "document: nesting is too deep to validate", {
@@ -38,6 +55,19 @@ function unsupportedMajor(input: unknown): number | null {
   const match = /^(\d+)\./.exec(version)
   const major = match ? Number(match[1]) : null
   return major !== null && major !== SCHEMA_MAJOR ? major : null
+}
+
+/** Exotic inputs (throwing getters or proxies) must still produce a typed error. */
+function readUntrusted(input: unknown, limits: Limits) {
+  try {
+    guardShape(input, limits)
+    return safeParse(DocumentSchema, input)
+  } catch (error) {
+    if (error instanceof AnnotateError) throw error
+    throw new AnnotateError("INVALID_DOCUMENT", "document: the input could not be read", {
+      issues: [{ path: "document", message: "The input could not be read" }],
+    })
+  }
 }
 
 function toErrorIssues(issues: readonly Issue[]): ErrorIssue[] {
@@ -82,8 +112,7 @@ export function parseDocument(input: unknown, options: ParseOptions = {}): Annot
     )
   }
   const limits = resolveLimits(options.limits)
-  guardDepth(input, limits)
-  const result = safeParse(DocumentSchema, input)
+  const result = readUntrusted(input, limits)
   if (!result.success) {
     const issues: Issue[] = result.issues.map((entry) => ({
       code: "INVALID_DOCUMENT",

@@ -3,6 +3,7 @@ import { isAnnotateError } from "../src/errors.js"
 import type { ErrorCode } from "../src/errors.js"
 import type { Limits } from "../src/limits.js"
 import { parseDocument } from "../src/validate/index.js"
+import { parseDocumentJson } from "../src/validate/json.js"
 import { type Loose, clone, validDocument } from "./fixtures.js"
 
 function codeOf(doc: unknown, limits?: Partial<Limits>): ErrorCode | "ACCEPTED" {
@@ -180,6 +181,68 @@ describe("defaults and consistency", () => {
       const doc: Loose = clone(validDocument())
       mutate(doc)
       expect(codeOf(doc)).not.toBe("ACCEPTED")
+    }
+  })
+})
+
+describe("resource exhaustion", () => {
+  it("caps config list lengths before they are searched per annotation", () => {
+    const doc: Loose = clone(validDocument())
+    doc.config.statuses = Array.from({ length: 5000 }, (_, i) => `s${i}`)
+    expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
+    const tools: Loose = clone(validDocument())
+    tools.config.tools = Array.from({ length: 5000 }, (_, i) => `t${i}`)
+    expect(codeOf(tools)).toBe("INVALID_DOCUMENT")
+    const options: Loose = clone(validDocument())
+    options.config.attributes.occluded = {
+      key: "occluded",
+      label: "O",
+      type: "enum",
+      options: Array.from({ length: 5000 }, (_, i) => `o${i}`),
+    }
+    expect(codeOf(options)).toBe("INVALID_DOCUMENT")
+  })
+
+  it("rejects too many annotations before schema-parsing them", () => {
+    const doc: Loose = clone(validDocument())
+    for (let i = 0; i < 20; i++) doc.regions[`x${i}`] = { not: "a region" }
+    expect(codeOf(doc, { maxAnnotations: 10 })).toBe("LIMIT_EXCEEDED")
+  })
+
+  it("caps the number of mask runs", () => {
+    const doc: Loose = clone(validDocument())
+    doc.regions.r5.geometry.counts = new Array(5_000_000).fill(0).concat([8])
+    expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
+  })
+
+  it("does not echo long attacker-controlled text in messages", () => {
+    const doc: Loose = clone(validDocument())
+    doc.regions.r1.status = "x".repeat(100_000)
+    try {
+      parseDocument(doc)
+      expect.unreachable()
+    } catch (error) {
+      expect(isAnnotateError(error) && error.message.length).toBeLessThan(500)
+    }
+  })
+
+  it("maps exotic input failures to typed errors", () => {
+    const doc: Loose = clone(validDocument())
+    Object.defineProperty(doc, "meta", {
+      enumerable: true,
+      get() {
+        throw new Error("boom")
+      },
+    })
+    expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
+  })
+
+  it("parseDocumentJson refuses non-string input with a typed error", () => {
+    expect(() => parseDocumentJson(undefined as unknown as string)).toThrow(/string/)
+    try {
+      parseDocumentJson(123 as unknown as string)
+    } catch (error) {
+      expect(isAnnotateError(error)).toBe(true)
     }
   })
 })

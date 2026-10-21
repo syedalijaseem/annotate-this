@@ -29,6 +29,12 @@ export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
   "prototype",
 ])
 
+/** Hard cap on short config lists (statuses, tools, enum options), which are searched per annotation. */
+export const MAX_LIST_LENGTH = 1000
+
+/** Hard cap on mask run counts: bounds memory before the pixel-sum check runs. */
+export const MAX_MASK_RUNS = 4_000_000
+
 /** Record keys need a string-input schema (record() constrains the key's input type). */
 const KeySchema = pipe(string(), regex(ID_PATTERN))
 

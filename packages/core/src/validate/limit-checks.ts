@@ -87,7 +87,7 @@ function sizeIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   }
   let total = 0
   for (const { geometry, path } of walkGeometries(doc)) {
-    total += vertexCount(geometry)
+    total += vertexCount(geometry) + (geometry.type === "mask" ? geometry.counts.length : 0)
     if (largestRun(geometry) > limits.maxVerticesPerShape) {
       issues.push(
         issue(

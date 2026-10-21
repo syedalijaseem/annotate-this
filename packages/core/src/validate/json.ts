@@ -30,6 +30,9 @@ const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff
  * before parsing, so an oversized payload is never turned into objects.
  */
 export function parseDocumentJson(text: string, options: ParseOptions = {}): AnnotationDocument {
+  if (typeof text !== "string") {
+    throw new AnnotateError("INVALID_DOCUMENT", "parseDocumentJson needs a string")
+  }
   const { maxDocumentBytes } = resolveLimits(options.limits)
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
   // UTF-16 code units never exceed UTF-8 bytes, so a longer string is certainly too big.

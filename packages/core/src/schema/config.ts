@@ -1,6 +1,7 @@
 import {
   type GenericSchema,
   array,
+  maxLength,
   boolean,
   exactOptional,
   looseObject,
@@ -13,6 +14,7 @@ import {
 import type { Config } from "../types.js"
 import { BoxSchema, GeometryTypeSchema } from "./geometry.js"
 import {
+  MAX_LIST_LENGTH,
   AttributeValueSchema,
   ColorSchema,
   IdSchema,
@@ -30,7 +32,7 @@ const ClassDefSchema = looseObject({
   name: TextSchema,
   color: exactOptional(ColorSchema),
   parentId: exactOptional(IdSchema),
-  allowedGeometry: exactOptional(array(GeometryTypeSchema)),
+  allowedGeometry: exactOptional(pipe(array(GeometryTypeSchema), maxLength(MAX_LIST_LENGTH))),
   attributeKeys: exactOptional(array(IdSchema)),
   hotkey: exactOptional(TextSchema),
   meta: MetaSchema,
@@ -48,7 +50,7 @@ const AttributeDefSchema = looseObject({
   label: TextSchema,
   required: exactOptional(boolean()),
   type: picklist(["string", "number", "boolean", "enum"] as const),
-  options: exactOptional(array(TextSchema)),
+  options: exactOptional(pipe(array(TextSchema), maxLength(MAX_LIST_LENGTH))),
   min: exactOptional(NumSchema),
   max: exactOptional(NumSchema),
   default: exactOptional(AttributeValueSchema),
@@ -73,10 +75,10 @@ export const ConfigSchema: GenericSchema<unknown, Config> = looseObject({
   tagOrder: array(IdSchema),
   attributes: safeRecord(AttributeDefSchema),
   skeletons: safeRecord(SkeletonSchema),
-  tools: exactOptional(array(TextSchema)),
+  tools: exactOptional(pipe(array(TextSchema), maxLength(MAX_LIST_LENGTH))),
   allowedArea: exactOptional(BoxSchema),
   minRegionSize: exactOptional(NonNegativeSchema),
-  statuses: exactOptional(pipe(array(TextSchema), minLength(1))),
+  statuses: exactOptional(pipe(array(TextSchema), minLength(1), maxLength(MAX_LIST_LENGTH))),
   meta: MetaSchema,
 })
 

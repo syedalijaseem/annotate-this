@@ -38,3 +38,8 @@ export function* walkGeometries(doc: AnnotationDocument): Generator<GeometryVisi
     }
   }
 }
+
+/** Shortens attacker-controlled text before it goes into a message. */
+export function clip(text: string, max = 64): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
