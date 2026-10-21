@@ -2,8 +2,8 @@
 
 A framework-agnostic image and video annotation library: a headless TypeScript
 core, a canvas renderer, thin adapters for React, Vue and Angular, and an
-optional themeable UI. Designed from day one to support real-time
-collaboration in the apps that embed it.
+optional themeable UI. Collaboration, storage and dataset management are
+deliberately out of scope; the library exposes the hooks apps need to build them.
 
 Status: **M0 (specification)**. No library code yet; see [docs/adr](docs/adr).
 
