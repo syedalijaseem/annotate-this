@@ -1,0 +1,60 @@
+{
+  "name": "annotate-this-core",
+  "version": "0.0.1",
+  "description": "Framework-agnostic, DOM-free core of annotate-this: document model, operations, store, undo and tools.",
+  "license": "MIT",
+  "author": "Syed Ali Jaseem <syedali0057@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/syedalijaseem/annotate-this.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/syedalijaseem/annotate-this#readme",
+  "keywords": [
+    "annotation",
+    "image-annotation",
+    "labeling",
+    "typescript"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:package": "publint && attw --pack . --profile esm-only",
+    "check:size": "size-limit"
+  },
+  "size-limit": [
+    {
+      "path": "dist/index.js",
+      "limit": "25 kB",
+      "gzip": true
+    }
+  ],
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@size-limit/file": "^14.2.0",
+    "publint": "^0.3.25",
+    "size-limit": "^14.2.0",
+    "tsdown": "^0.23.1",
+    "vitest": "^5.0.5"
+  }
+}
