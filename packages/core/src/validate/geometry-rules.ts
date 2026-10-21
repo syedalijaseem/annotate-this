@@ -1,7 +1,7 @@
 import { type Bounds, boundsWithin, geometryBounds } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
 import type { AnnotationDocument, BoxGeometry, Geometry } from "../types.js"
-import { type Issue, issue, pushAll, walkGeometries } from "./issues.js"
+import { type Issue, issue, own, pushAll, walkGeometries } from "./issues.js"
 
 /** Slack for coordinates that land a rounding error outside the image. */
 const BOUNDS_TOLERANCE = 0.5
@@ -17,7 +17,7 @@ function shapeRules(
   limits: Limits,
 ): Issue[] {
   if (geometry.type === "keypoints") {
-    const skeleton = doc.config.skeletons[geometry.skeletonId]
+    const skeleton = own(doc.config.skeletons, geometry.skeletonId)
     if (skeleton && geometry.points.length !== skeleton.points.length * 3) {
       return [
         issue(
@@ -47,7 +47,7 @@ function areaRules(
   sourceId: string,
   doc: AnnotationDocument,
 ): Issue[] {
-  const source = doc.sources[sourceId]
+  const source = own(doc.sources, sourceId)
   const bounds = geometryBounds(geometry)
   if (!source || !bounds) return []
   const image: Bounds = { minX: 0, minY: 0, maxX: source.width, maxY: source.height }

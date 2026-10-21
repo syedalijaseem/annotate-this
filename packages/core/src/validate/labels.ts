@@ -1,5 +1,5 @@
 import type { AnnotationDocument, AttributeDef, AttributeValue, GeometryType } from "../types.js"
-import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, own, pushAll } from "./issues.js"
 
 const optionSets = new WeakMap<AttributeDef, ReadonlySet<string>>()
 
@@ -39,7 +39,7 @@ export function attributeIssues(
   const issues: Issue[] = []
   for (const [key, value] of Object.entries(attributes)) {
     if (issues.length >= MAX_ISSUES_PER_CHECK) break
-    const def = doc.config.attributes[key]
+    const def = own(doc.config.attributes, key)
     if (!def) {
       issues.push(issue("ATTRIBUTE_INVALID", `${path}.${key}`, `Unknown attribute "${key}"`))
       continue
@@ -57,7 +57,8 @@ export function classGeometryIssue(
   classId: string | undefined,
   type: GeometryType,
 ): Issue[] {
-  const allowed = classId === undefined ? undefined : doc.config.classes[classId]?.allowedGeometry
+  const allowed =
+    classId === undefined ? undefined : own(doc.config.classes, classId)?.allowedGeometry
   if (allowed && !allowed.includes(type)) {
     return [
       issue(

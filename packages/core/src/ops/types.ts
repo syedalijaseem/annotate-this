@@ -121,6 +121,15 @@ export interface ApplyOptions {
   /** Skip `baseRev` checks. */
   ignoreRev?: boolean
   limits?: Partial<Limits>
+  /**
+   * Id for the `index`-th inverse operation of operation `opId`. Must be
+   * deterministic (apply stays pure), return a valid id, and be unique across
+   * the store's idempotency window. The default derives one by hashing
+   * `(opId, index)`, which anyone can predict: a store that accepts operations
+   * from remote peers should supply ids a peer cannot pre-empt (for example a
+   * keyed hash or ids drawn before the call).
+   */
+  inverseId?: (opId: ID, index: number) => ID
 }
 
 /** Entity ids touched by a committed batch; `"config"` and the document id are included when they change. */

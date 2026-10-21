@@ -22,6 +22,13 @@ export interface Limits {
   maxDocumentNodes: number
   /** Maximum keys in any one object, and so the largest record the document can hold. */
   maxEntries: number
+  /**
+   * Maximum work units one `apply` batch may spend. A unit is roughly one
+   * payload value copied, one map entry merged, one vertex re-validated or 16
+   * entries of an ordering scanned. Bounds the total cost of a hostile or
+   * accidental batch (for example 50,000 reorders of a 50,000-region source).
+   */
+  maxBatchWork: number
 }
 
 export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
@@ -36,6 +43,7 @@ export const DEFAULT_LIMITS: Readonly<Limits> = Object.freeze({
   maxBatchOps: 50_000,
   maxDocumentNodes: 3_000_000,
   maxEntries: 100_000,
+  maxBatchWork: 50_000_000,
 })
 
 export function resolveLimits(overrides: Partial<Limits> = {}): Limits {

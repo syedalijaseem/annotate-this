@@ -1,8 +1,12 @@
 import { largestRun, vertexCount } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
-import type { AnnotationDocument, JSONValue, Region, Track } from "../types.js"
+import type { AnnotationDocument, Geometry, JSONValue, Region, Track } from "../types.js"
 import { nestingDepth } from "./depth.js"
 import { type Issue, MAX_ISSUES_PER_CHECK, issue, walkGeometries } from "./issues.js"
+
+/** What one geometry counts against `maxTotalVertices` (mask runs count too). */
+export const geometryWeight = (geometry: Geometry): number =>
+  vertexCount(geometry) + (geometry.type === "mask" ? geometry.counts.length : 0)
 
 function metaIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const holders: [string, JSONValue][] = [
@@ -167,7 +171,7 @@ function sizeIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   }
   let total = 0
   for (const { geometry, path } of walkGeometries(doc)) {
-    total += vertexCount(geometry) + (geometry.type === "mask" ? geometry.counts.length : 0)
+    total += geometryWeight(geometry)
     if (largestRun(geometry) > limits.maxVerticesPerShape) {
       issues.push(
         issue(

@@ -1,5 +1,5 @@
 import type { AnnotationDocument, Region, Track, VideoSource } from "../types.js"
-import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, own, pushAll } from "./issues.js"
 
 function sourceRules(id: string, source: VideoSource): Issue[] {
   const issues: Issue[] = []
@@ -57,7 +57,7 @@ function trackRules(id: string, track: Track, frameCount: number): Issue[] {
 
 /** Frame rules for one region: video regions need a frame in range, image regions must not have one. */
 export function regionFrameIssue(doc: AnnotationDocument, id: string, region: Region): Issue[] {
-  const source = doc.sources[region.sourceId]
+  const source = own(doc.sources, region.sourceId)
   if (!source) return []
   const at = `regions.${id}.frame`
   if (source.kind === "image" && region.frame !== undefined) {
@@ -85,7 +85,7 @@ export function checkVideo(doc: AnnotationDocument): Issue[] {
     if (source.kind === "video") pushAll(issues, sourceRules(id, source))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
-    const source = doc.sources[track.sourceId]
+    const source = own(doc.sources, track.sourceId)
     if (source?.kind === "video") pushAll(issues, trackRules(id, track, source.frameCount))
   }
   return issues
