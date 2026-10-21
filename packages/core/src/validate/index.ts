@@ -1,21 +1,16 @@
 import { getDotPath, safeParse } from "valibot"
-import { AnnotateError, type ErrorIssue } from "../errors.js"
+import { AnnotateError } from "../errors.js"
 import { type Limits, resolveLimits } from "../limits.js"
 import { DocumentSchema, SCHEMA_MAJOR } from "../schema/document.js"
 import type { AnnotationDocument } from "../types.js"
 import { STRUCTURE_DEPTH_ALLOWANCE, findBudgetBreach, isPlainJson } from "./depth.js"
 import { checkGeometryRules } from "./geometry-rules.js"
 import { checkIdentity, checkOrders } from "./identity.js"
-import { type Issue, clip } from "./issues.js"
+import { type Issue, fail } from "./issues.js"
 import { checkLabels } from "./labels.js"
 import { checkLimits } from "./limit-checks.js"
 import { checkReferences } from "./references.js"
 import { checkVideo } from "./video.js"
-
-const MAX_REPORTED_ISSUES = 25
-
-/** Paths and messages can quote the input, so they are cut to this length. */
-const MAX_TEXT = 200
 
 export interface ParseOptions {
   limits?: Partial<Limits>
@@ -93,21 +88,6 @@ function readUntrusted(input: unknown, limits: Limits) {
       issues: [{ path: "document", message: "The input could not be read" }],
     })
   }
-}
-
-function toErrorIssues(issues: readonly Issue[]): ErrorIssue[] {
-  return issues
-    .slice(0, MAX_REPORTED_ISSUES)
-    .map(({ path, message }) => ({ path: clip(path, MAX_TEXT), message: clip(message, MAX_TEXT) }))
-}
-
-function fail(issues: readonly Issue[]): never {
-  const first = issues[0] as Issue
-  const extra = issues.length > 1 ? ` (and ${issues.length - 1} more)` : ""
-  const summary = clip(`${first.path}: ${first.message}`, MAX_TEXT)
-  throw new AnnotateError(first.code, `${summary}${extra}`, {
-    issues: toErrorIssues(issues),
-  })
 }
 
 function invariantIssues(doc: AnnotationDocument, limits: Limits): Issue[] {

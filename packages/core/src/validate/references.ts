@@ -1,6 +1,14 @@
 import { DEFAULT_STATUSES } from "../schema/config.js"
 import type { AnnotationBase, AnnotationDocument } from "../types.js"
-import { type Issue, MAX_ISSUES_PER_CHECK, clip, issue, pushAll, walkGeometries } from "./issues.js"
+import {
+  type Issue,
+  MAX_ISSUES_PER_CHECK,
+  clip,
+  issue,
+  own,
+  pushAll,
+  walkGeometries,
+} from "./issues.js"
 
 /** Detects cycles in a parent graph in linear time (three-colour depth-first walk). */
 function findCycles(parents: ReadonlyMap<string, string>): string[] {
@@ -37,7 +45,7 @@ function tagIssues(doc: AnnotationDocument, path: string, tagIds: readonly strin
   const seen = new Set<string>()
   for (const tagId of tagIds) {
     if (issues.length >= MAX_ISSUES_PER_CHECK) return issues
-    if (!(tagId in doc.config.tags))
+    if (!Object.hasOwn(doc.config.tags, tagId))
       issues.push(issue("INVALID_DOCUMENT", path, `Unknown tag "${tagId}"`))
     else if (seen.has(tagId))
       issues.push(issue("INVALID_DOCUMENT", path, `Tag "${tagId}" is listed twice`))
@@ -46,7 +54,8 @@ function tagIssues(doc: AnnotationDocument, path: string, tagIds: readonly strin
   return issues
 }
 
-function annotationRefs(
+/** References of one region or track: source, class, tags, parent and status. */
+export function annotationRefs(
   doc: AnnotationDocument,
   kind: "regions" | "tracks",
   id: string,
@@ -54,14 +63,14 @@ function annotationRefs(
 ): Issue[] {
   const issues: Issue[] = []
   const at = `${kind}.${id}`
-  if (!(a.sourceId in doc.sources))
+  if (!Object.hasOwn(doc.sources, a.sourceId))
     issues.push(issue("INVALID_DOCUMENT", `${at}.sourceId`, `Unknown source "${a.sourceId}"`))
-  if (a.classId !== undefined && !(a.classId in doc.config.classes)) {
+  if (a.classId !== undefined && !Object.hasOwn(doc.config.classes, a.classId)) {
     issues.push(issue("INVALID_DOCUMENT", `${at}.classId`, `Unknown class "${a.classId}"`))
   }
   pushAll(issues, tagIssues(doc, `${at}.tagIds`, a.tagIds))
   if (a.parentId !== undefined) {
-    const parent = doc.regions[a.parentId] ?? doc.tracks[a.parentId]
+    const parent = own(doc.regions, a.parentId) ?? own(doc.tracks, a.parentId)
     if (!parent)
       issues.push(issue("INVALID_DOCUMENT", `${at}.parentId`, `Unknown parent "${a.parentId}"`))
     else if (parent.sourceId !== a.sourceId) {
@@ -85,7 +94,7 @@ function annotationRefs(
 function sourceRefs(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = []
   for (const [id, source] of Object.entries(doc.sources)) {
-    if (source.classId !== undefined && !(source.classId in doc.config.classes)) {
+    if (source.classId !== undefined && !Object.hasOwn(doc.config.classes, source.classId)) {
       issues.push(
         issue("INVALID_DOCUMENT", `sources.${id}.classId`, `Unknown class "${source.classId}"`),
       )
@@ -100,7 +109,7 @@ function configRefs(doc: AnnotationDocument): Issue[] {
   const parents = new Map<string, string>()
   for (const [id, def] of Object.entries(doc.config.classes)) {
     if (def.parentId !== undefined) {
-      if (def.parentId in doc.config.classes) parents.set(id, def.parentId)
+      if (Object.hasOwn(doc.config.classes, def.parentId)) parents.set(id, def.parentId)
       else
         issues.push(
           issue(
@@ -112,7 +121,7 @@ function configRefs(doc: AnnotationDocument): Issue[] {
     }
     for (const key of def.attributeKeys ?? []) {
       if (issues.length >= MAX_ISSUES_PER_CHECK) break
-      if (!(key in doc.config.attributes)) {
+      if (!Object.hasOwn(doc.config.attributes, key)) {
         issues.push(
           issue(
             "INVALID_DOCUMENT",
@@ -152,7 +161,7 @@ function annotationGraph(doc: AnnotationDocument): Issue[] {
   for (const [id, track] of Object.entries(doc.tracks)) {
     pushAll(issues, annotationRefs(doc, "tracks", id, track))
     if (track.parentId !== undefined) parents.set(id, track.parentId)
-    if (doc.sources[track.sourceId]?.kind === "image") {
+    if (own(doc.sources, track.sourceId)?.kind === "image") {
       issues.push(
         issue("INVALID_DOCUMENT", `tracks.${id}.sourceId`, "Tracks belong to video sources only"),
       )
@@ -162,7 +171,7 @@ function annotationGraph(doc: AnnotationDocument): Issue[] {
     issues.push(
       issue(
         "CYCLE",
-        `${id in doc.regions ? "regions" : "tracks"}.${id}.parentId`,
+        `${Object.hasOwn(doc.regions, id) ? "regions" : "tracks"}.${id}.parentId`,
         "Parent chain contains a cycle",
       ),
     )
@@ -172,7 +181,10 @@ function annotationGraph(doc: AnnotationDocument): Issue[] {
 function skeletonRefs(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = []
   for (const { geometry, path } of walkGeometries(doc)) {
-    if (geometry.type === "keypoints" && !(geometry.skeletonId in doc.config.skeletons)) {
+    if (
+      geometry.type === "keypoints" &&
+      !Object.hasOwn(doc.config.skeletons, geometry.skeletonId)
+    ) {
       issues.push(
         issue(
           "INVALID_DOCUMENT",

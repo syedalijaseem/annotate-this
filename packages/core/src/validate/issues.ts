@@ -1,4 +1,4 @@
-import type { ErrorCode } from "../errors.js"
+import { AnnotateError, type ErrorCode } from "../errors.js"
 import type { AnnotationDocument, Geometry } from "../types.js"
 
 export interface Issue {
@@ -51,3 +51,26 @@ export function pushAll<T>(target: T[], items: readonly T[]): void {
 
 /** Checks stop collecting after this many issues: only the first few are ever reported. */
 export const MAX_ISSUES_PER_CHECK = 100
+
+/** Own-property lookup: names like "toString" must never resolve through Object.prototype. */
+export function own<V>(record: Record<string, V>, key: string): V | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined
+}
+
+const MAX_REPORTED_ISSUES = 25
+
+/** Paths and messages can quote the input, so they are cut to this length. */
+const MAX_TEXT = 200
+
+/** Throws the first issue's code, with the first few issues attached (clipped: they can quote input). */
+export function fail(issues: readonly Issue[]): never {
+  const first = issues[0] as Issue
+  const extra = issues.length > 1 ? ` (and ${issues.length - 1} more)` : ""
+  const summary = clip(`${first.path}: ${first.message}`, MAX_TEXT)
+  throw new AnnotateError(first.code, `${summary}${extra}`, {
+    issues: issues.slice(0, MAX_REPORTED_ISSUES).map(({ path, message }) => ({
+      path: clip(path, MAX_TEXT),
+      message: clip(message, MAX_TEXT),
+    })),
+  })
+}

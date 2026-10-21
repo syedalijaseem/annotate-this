@@ -19,7 +19,8 @@ export function nestingDepth(value: unknown, limit: number): number {
   return deepest
 }
 
-const isPlainContainer = (value: object): boolean => {
+/** Arrays and objects whose prototype is null or some realm's Object.prototype. */
+export const isPlainContainer = (value: object): boolean => {
   if (Array.isArray(value)) return true
   const prototype = Object.getPrototypeOf(value) as object | null
   // Any realm's Object.prototype has a null prototype, so cross-realm plain objects pass.
@@ -88,6 +89,27 @@ export function findBudgetBreach(value: unknown, budget: InputBudget): BudgetBre
     if (nodes > budget.nodes) return "nodes"
   }
   return null
+}
+
+/** Values in `value`, counted as findBudgetBreach counts them (plain numbers are free). Iterative. */
+export function countNodes(value: unknown): number {
+  let nodes = 0
+  const stack: unknown[] = [value]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (typeof current !== "object" || current === null) {
+      if (typeof current !== "number") nodes += 1
+      continue
+    }
+    const isArray = Array.isArray(current)
+    const children: unknown[] = isArray ? current : Object.values(current)
+    nodes += isArray ? 1 : 1 + children.length
+    for (const child of children) {
+      if (typeof child === "object" && child !== null) stack.push(child)
+      else if (typeof child !== "number") nodes += 1
+    }
+  }
+  return nodes
 }
 
 /** Beyond free-form JSON, the document's own structure nests this deep at most. */
