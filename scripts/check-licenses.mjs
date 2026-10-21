@@ -12,7 +12,7 @@ const ALLOWED = new Set([
   "BlueOak-1.0.0",
 ])
 
-const raw = execFileSync("pnpm", ["licenses", "list", "--prod", "--json"], {
+const raw = execFileSync("pnpm", ["licenses", "list", "--prod", "--recursive", "--json"], {
   encoding: "utf8",
 })
 const byLicense = JSON.parse(raw)
