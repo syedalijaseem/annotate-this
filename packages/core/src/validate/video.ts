@@ -1,5 +1,5 @@
 import type { AnnotationDocument, Track, VideoSource } from "../types.js"
-import { type Issue, issue } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
 
 function sourceRules(id: string, source: VideoSource): Issue[] {
   const issues: Issue[] = []
@@ -33,6 +33,7 @@ function trackRules(id: string, track: Track, frameCount: number): Issue[] {
   const issues: Issue[] = []
   let previous = -1
   for (const [i, keyframe] of track.keyframes.entries()) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) break
     const at = `tracks.${id}.keyframes.${i}`
     if (keyframe.frame <= previous)
       issues.push(
@@ -78,11 +79,11 @@ function regionFrameRules(doc: AnnotationDocument): Issue[] {
 export function checkVideo(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = regionFrameRules(doc)
   for (const [id, source] of Object.entries(doc.sources)) {
-    if (source.kind === "video") issues.push(...sourceRules(id, source))
+    if (source.kind === "video") pushAll(issues, sourceRules(id, source))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
     const source = doc.sources[track.sourceId]
-    if (source?.kind === "video") issues.push(...trackRules(id, track, source.frameCount))
+    if (source?.kind === "video") pushAll(issues, trackRules(id, track, source.frameCount))
   }
   return issues
 }

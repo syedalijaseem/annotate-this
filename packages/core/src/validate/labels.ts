@@ -1,5 +1,17 @@
 import type { AnnotationDocument, AttributeDef, AttributeValue, GeometryType } from "../types.js"
-import { type Issue, issue } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, pushAll } from "./issues.js"
+
+const optionSets = new WeakMap<AttributeDef, ReadonlySet<string>>()
+
+/** One Set per definition, so enum checks do not scan up to 1000 options per value. */
+function optionSet(def: AttributeDef): ReadonlySet<string> {
+  let set = optionSets.get(def)
+  if (!set) {
+    set = new Set(def.options ?? [])
+    optionSets.set(def, set)
+  }
+  return set
+}
 
 function attributeProblem(def: AttributeDef, value: AttributeValue): string | null {
   switch (def.type) {
@@ -8,7 +20,7 @@ function attributeProblem(def: AttributeDef, value: AttributeValue): string | nu
     case "boolean":
       return typeof value === "boolean" ? null : "expected a boolean"
     case "enum":
-      return typeof value === "string" && (def.options ?? []).includes(value)
+      return typeof value === "string" && optionSet(def).has(value)
         ? null
         : "expected one of the listed options"
     case "number":
@@ -26,6 +38,7 @@ function attributeIssues(
 ): Issue[] {
   const issues: Issue[] = []
   for (const [key, value] of Object.entries(attributes)) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) break
     const def = doc.config.attributes[key]
     if (!def) {
       issues.push(issue("ATTRIBUTE_INVALID", `${path}.${key}`, `Unknown attribute "${key}"`))
@@ -94,17 +107,17 @@ function duplicateAttributeKeys(doc: AnnotationDocument): Issue[] {
 export function checkLabels(doc: AnnotationDocument): Issue[] {
   const issues = [...attributeDefKeys(doc), ...duplicateAttributeKeys(doc)]
   for (const [key, def] of Object.entries(doc.config.attributes))
-    issues.push(...attributeDefProblems(key, def))
+    pushAll(issues, attributeDefProblems(key, def))
   for (const [id, source] of Object.entries(doc.sources)) {
-    issues.push(...attributeIssues(doc, `sources.${id}.attributes`, source.attributes))
+    pushAll(issues, attributeIssues(doc, `sources.${id}.attributes`, source.attributes))
   }
   for (const [id, region] of Object.entries(doc.regions)) {
-    issues.push(...attributeIssues(doc, `regions.${id}.attributes`, region.attributes))
-    issues.push(...classGeometryIssue(doc, `regions.${id}`, region.classId, region.geometry.type))
+    pushAll(issues, attributeIssues(doc, `regions.${id}.attributes`, region.attributes))
+    pushAll(issues, classGeometryIssue(doc, `regions.${id}`, region.classId, region.geometry.type))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
-    issues.push(...attributeIssues(doc, `tracks.${id}.attributes`, track.attributes))
-    issues.push(...classGeometryIssue(doc, `tracks.${id}`, track.classId, track.geometryType))
+    pushAll(issues, attributeIssues(doc, `tracks.${id}.attributes`, track.attributes))
+    pushAll(issues, classGeometryIssue(doc, `tracks.${id}`, track.classId, track.geometryType))
   }
   return issues
 }

@@ -7,6 +7,7 @@ import {
   isoTimestamp,
   lazy,
   maxLength,
+  maxValue,
   minValue,
   null as nullSchema,
   number,
@@ -35,6 +36,12 @@ export const MAX_LIST_LENGTH = 1000
 /** Hard cap on mask run counts: bounds memory before the pixel-sum check runs. */
 export const MAX_MASK_RUNS = 4_000_000
 
+/** Hard cap on one flat coordinate array: bounds work before the configurable vertex limits run. */
+export const MAX_COORDINATES = 8_000_000
+
+/** Hard cap on the length of a custom geometry kind ("vendor:name"). */
+export const MAX_CUSTOM_KIND_LENGTH = 256
+
 /** Record keys need a string-input schema (record() constrains the key's input type). */
 const KeySchema = pipe(string(), regex(ID_PATTERN))
 
@@ -46,13 +53,19 @@ export const NonNegativeSchema: GenericSchema<unknown, number> = pipe(
   finite(),
   minValue(0),
 )
-export const IntSchema: GenericSchema<unknown, number> = pipe(number(), integer(), minValue(0))
+export const IntSchema: GenericSchema<unknown, number> = pipe(
+  number(),
+  integer(),
+  minValue(0),
+  maxValue(Number.MAX_SAFE_INTEGER),
+)
 /** Entity revision counter (Spec 0001). */
 export const RevSchema: GenericSchema<unknown, number> = IntSchema
 export const PositiveIntSchema: GenericSchema<unknown, number> = pipe(
   number(),
   integer(),
   minValue(1),
+  maxValue(Number.MAX_SAFE_INTEGER),
 )
 
 /** Free text. Length limits beyond this hard cap are enforced by the configurable limits pass. */
@@ -66,7 +79,11 @@ export const ColorSchema: GenericSchema<unknown, string> = pipe(
 function rejectForbiddenKeys(): ReturnType<typeof rawCheck<unknown>> {
   return rawCheck(({ dataset, addIssue }) => {
     const input = dataset.value
-    if (typeof input !== "object" || input === null || Array.isArray(input)) return
+    if (Array.isArray(input)) {
+      addIssue({ message: "Expected an object but received an array" })
+      return
+    }
+    if (typeof input !== "object" || input === null) return
     for (const key of Object.keys(input)) {
       if (FORBIDDEN_KEYS.has(key)) addIssue({ message: `Forbidden key "${key}"` })
     }
@@ -105,22 +122,26 @@ function jsonRecord<V>(
   )
 }
 
-const JsonValueSchema: GenericSchema<unknown, JSONValue> = lazy(() =>
-  union([
-    string(),
-    NumSchema,
-    boolean(),
-    nullSchema(),
-    array(JsonValueSchema),
-    jsonRecord(JsonValueSchema),
-  ]),
-)
+const JsonScalarSchema = union([string(), NumSchema, boolean(), nullSchema()])
+const JsonArraySchema = array(lazy(() => JsonValueSchema))
+const JsonObjectSchema = jsonRecord(lazy(() => JsonValueSchema))
+
+/**
+ * Picks one branch from the input's type. A plain union would try every branch
+ * on every level, and an array also passes record()'s object check, so a bad
+ * leaf nested n levels deep would cost 2^n work.
+ */
+const JsonValueSchema: GenericSchema<unknown, JSONValue> = lazy((input) => {
+  if (Array.isArray(input)) return JsonArraySchema
+  if (typeof input === "object" && input !== null) return JsonObjectSchema
+  return JsonScalarSchema
+})
 
 export const MetaSchema = jsonRecord(JsonValueSchema)
 export const JsonSchema = JsonValueSchema
 
 export const AttributeValueSchema: GenericSchema<unknown, AttributeValue> = union([
-  string(),
+  TextSchema,
   NumSchema,
   boolean(),
 ])

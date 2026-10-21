@@ -9,7 +9,7 @@ import {
   picklist,
   pipe,
   string,
-  tuple,
+  strictTuple,
 } from "valibot"
 import type { Config } from "../types.js"
 import { BoxSchema, GeometryTypeSchema } from "./geometry.js"
@@ -63,7 +63,7 @@ const SkeletonSchema = looseObject({
     array(looseObject({ name: TextSchema, color: exactOptional(ColorSchema) })),
     minLength(1),
   ),
-  edges: array(tuple([IntSchema, IntSchema])),
+  edges: array(strictTuple([IntSchema, IntSchema])),
 })
 
 export const ConfigSchema: GenericSchema<unknown, Config> = looseObject({

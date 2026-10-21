@@ -1,8 +1,8 @@
 import { largestRun, vertexCount } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
-import type { AnnotationDocument, JSONValue } from "../types.js"
+import type { AnnotationDocument, JSONValue, Track } from "../types.js"
 import { nestingDepth } from "./depth.js"
-import { type Issue, issue, walkGeometries } from "./issues.js"
+import { type Issue, MAX_ISSUES_PER_CHECK, issue, walkGeometries } from "./issues.js"
 
 function metaIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const holders: [string, JSONValue][] = [
@@ -29,6 +29,19 @@ function metaIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
     )
 }
 
+const textOf = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined
+
+/** Checks the string values of an attribute record. */
+function attributeStrings(
+  check: StringCheck,
+  path: string,
+  attributes: Record<string, unknown>,
+  max: number,
+): void {
+  for (const [key, value] of Object.entries(attributes)) check(`${path}.${key}`, textOf(value), max)
+}
+
 type StringCheck = (path: string, value: string | undefined, max: number) => void
 
 function configStringIssues(doc: AnnotationDocument, check: StringCheck, limits: Limits): void {
@@ -41,37 +54,47 @@ function configStringIssues(doc: AnnotationDocument, check: StringCheck, limits:
     check(`config.tags.${id}.name`, t.name, max)
   for (const [key, a] of Object.entries(doc.config.attributes)) {
     check(`config.attributes.${key}.label`, a.label, max)
+    check(`config.attributes.${key}.default`, textOf(a.default), max)
     for (const option of a.options ?? []) check(`config.attributes.${key}.options`, option, max)
   }
-  for (const [id, k] of Object.entries(doc.config.skeletons))
+  for (const [id, k] of Object.entries(doc.config.skeletons)) {
     check(`config.skeletons.${id}.name`, k.name, max)
+    for (const [i, point] of k.points.entries())
+      check(`config.skeletons.${id}.points.${i}.name`, point.name, max)
+  }
   for (const tool of doc.config.tools ?? []) check("config.tools", tool, max)
 }
 
 function stringIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
   const issues: Issue[] = []
   const check: StringCheck = (path, value, max) => {
-    if (value !== undefined && value.length > max)
+    if (issues.length < MAX_ISSUES_PER_CHECK && value !== undefined && value.length > max)
       issues.push(issue("LIMIT_EXCEEDED", path, `Text is longer than ${max} characters`))
   }
   check("config.taskDescription", doc.config.taskDescription, limits.maxCommentLength)
+  const text = limits.maxStringLength
   for (const [id, s] of Object.entries(doc.sources)) {
-    check(`sources.${id}.name`, s.name, limits.maxStringLength)
-    check(`sources.${id}.uri`, s.uri, limits.maxStringLength)
-    check(`sources.${id}.thumbnailUri`, s.thumbnailUri, limits.maxStringLength)
+    check(`sources.${id}.name`, s.name, text)
+    check(`sources.${id}.uri`, s.uri, text)
+    check(`sources.${id}.thumbnailUri`, s.thumbnailUri, text)
     check(`sources.${id}.comment`, s.comment, limits.maxCommentLength)
+    check(`sources.${id}.scale.realSize.unit`, s.scale?.realSize?.unit, text)
+    attributeStrings(check, `sources.${id}.attributes`, s.attributes, text)
   }
-  for (const [id, a] of [...Object.entries(doc.regions), ...Object.entries(doc.tracks)]) {
-    check(
-      `${id in doc.regions ? "regions" : "tracks"}.${id}.comment`,
-      a.comment,
-      limits.maxCommentLength,
-    )
-    check(
-      `${id in doc.regions ? "regions" : "tracks"}.${id}.status`,
-      a.status,
-      limits.maxStringLength,
-    )
+  const annotations: [string, string, AnnotationDocument["regions"][string] | Track][] = [
+    ...Object.entries(doc.regions).map(([id, a]): [string, string, typeof a] => ["regions", id, a]),
+    ...Object.entries(doc.tracks).map(([id, a]): [string, string, typeof a] => ["tracks", id, a]),
+  ]
+  for (const [kind, id, a] of annotations) {
+    const at = `${kind}.${id}`
+    check(`${at}.comment`, a.comment, limits.maxCommentLength)
+    check(`${at}.status`, a.status, text)
+    check(`${at}.provenance.createdBy`, a.provenance.createdBy, text)
+    if (a.provenance.source !== "manual") {
+      check(`${at}.provenance.source.model`, a.provenance.source.model, text)
+      check(`${at}.provenance.source.version`, a.provenance.source.version, text)
+    }
+    attributeStrings(check, `${at}.attributes`, a.attributes, text)
   }
   configStringIssues(doc, check, limits)
   return issues

@@ -64,6 +64,9 @@ export function createIdGenerator(options: IdGeneratorOptions = {}): () => ID {
     } else {
       counter += 1
       if (counter > COUNTER_MAX) {
+        if (lastTimestamp + 1 >= MAX_TIMESTAMP) {
+          throw new Error("The ID generator ran out of timestamps in the 48-bit range")
+        }
         lastTimestamp += 1
         counter = 0
       }

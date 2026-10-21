@@ -3,6 +3,7 @@ import {
   array,
   boolean,
   exactOptional,
+  lazy,
   literal,
   looseObject,
   maxValue,
@@ -13,7 +14,6 @@ import {
   picklist,
   pipe,
   string,
-  union,
 } from "valibot"
 import type { Keyframe, Region, Track } from "../types.js"
 import { GeometrySchema, TrackGeometryTypeSchema } from "./geometry.js"
@@ -27,18 +27,19 @@ import {
   TimestampSchema,
 } from "./primitives.js"
 
+const ModelSourceSchema = looseObject({
+  model: TextSchema,
+  version: exactOptional(TextSchema),
+  confidence: exactOptional(pipe(number(), finite(), minValue(0), maxValue(1))),
+})
+const ManualSourceSchema = literal("manual")
+
 const ProvenanceSchema = looseObject({
   createdBy: exactOptional(TextSchema),
   createdAt: exactOptional(TimestampSchema),
   updatedAt: exactOptional(TimestampSchema),
-  source: union([
-    literal("manual"),
-    looseObject({
-      model: TextSchema,
-      version: exactOptional(TextSchema),
-      confidence: exactOptional(pipe(number(), finite(), minValue(0), maxValue(1))),
-    }),
-  ]),
+  // Chosen by input, not a union: a union would hide which field of the model source failed.
+  source: lazy((input) => (input === "manual" ? ManualSourceSchema : ModelSourceSchema)),
 })
 
 /** Fields shared by regions and tracks (Spec 0001, AnnotationBase). */
