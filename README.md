@@ -7,4 +7,4 @@ deliberately out of scope; the library exposes the hooks apps need to build them
 
 Status: **in development**. `annotate-this-core` (document model, validation and
 the pure operations engine `apply`) is being built; the store, renderer, adapters
-and UI are not written yet. Design records live in [docs/adr](docs/adr).
+and UI are not written yet.
