@@ -1,13 +1,11 @@
 import { AnnotateError } from "../errors.js"
-import type { AnnotationBase } from "../types.js"
 import type { OpContext } from "./context.js"
-import type { AnnotationPatch } from "./types.js"
 import { deepEqual } from "./util.js"
 
-// Optional scalar fields where `null` clears the value.
-const CLEARABLE = ["classId", "comment", "locked", "hidden", "parentId", "frame"] as const
-
 type Fields = Record<string, unknown>
+
+// Patch fields that merge key by key (`null` deletes a key) instead of replacing the value.
+const MAP_FIELDS: ReadonlySet<string> = /* @__PURE__ */ new Set(["attributes", "meta"])
 
 // Merges a map patch (`null` deletes a key) into `current` without editing it.
 // Returns `null` when nothing changes; `undo` receives the old value of each
@@ -43,64 +41,35 @@ export function mergeMap<V>(
   return next
 }
 
-function patchScalars(current: Fields, wanted: Fields, next: Fields, undo: Fields): Set<string> {
-  const cleared = new Set<string>()
-  for (const key of CLEARABLE) {
-    const value = wanted[key]
-    if (value === undefined) continue
-    const old = current[key]
-    if (value === null) {
+// Applies a parsed patch (op-schema.ts decides which fields may appear and
+// which may be null) to any entity without mutating it: absent = unchanged,
+// `null` = clear, `attributes`/`meta` merge per key, anything else is replaced.
+// Returns `null` for a no-op, otherwise the new entity and the patch that undoes it.
+export function applyPatch<T extends object>(
+  ctx: OpContext,
+  entity: T,
+  patch: object,
+): { next: T; undo: Fields } | null {
+  const current = entity as Fields
+  const next: Fields = { ...current }
+  const undo: Fields = {}
+  for (const [key, value] of Object.entries(patch)) {
+    const old = Object.hasOwn(current, key) ? current[key] : undefined
+    if (MAP_FIELDS.has(key)) {
+      const fieldUndo: Fields = {}
+      const merged = mergeMap(ctx, (old ?? {}) as Fields, value as Fields, fieldUndo)
+      if (merged) {
+        next[key] = merged
+        undo[key] = fieldUndo
+      }
+    } else if (value === null) {
       if (old === undefined) continue
-      cleared.add(key)
+      Reflect.deleteProperty(next, key)
       undo[key] = old
     } else if (!deepEqual(old, value)) {
       next[key] = value
       undo[key] = old ?? null
     }
   }
-  return cleared
-}
-
-function patchMaps(
-  ctx: OpContext,
-  entity: AnnotationBase,
-  patch: AnnotationPatch,
-  next: Fields,
-  undo: Fields,
-) {
-  for (const field of ["attributes", "meta"] as const) {
-    const changes = patch[field]
-    if (!changes) continue
-    const fieldUndo = {}
-    const merged = mergeMap<unknown>(ctx, entity[field], changes, fieldUndo)
-    if (merged) {
-      next[field] = merged
-      undo[field] = fieldUndo
-    }
-  }
-}
-
-// Applies an annotation patch without mutating `entity`. Returns `null` when
-// nothing would change (a no-op), otherwise the new entity and the patch that
-// undoes it. The patch must already be parsed (op-schema.ts).
-export function applyAnnotationPatch<T extends AnnotationBase>(
-  ctx: OpContext,
-  entity: T,
-  patch: AnnotationPatch & { frame?: number | null },
-): { next: T; undo: AnnotationPatch & { frame?: number | null } } | null {
-  const next: Fields = { ...(entity as unknown as Fields) }
-  const undo: Fields = {}
-  const cleared = patchScalars(entity as unknown as Fields, patch as Fields, next, undo)
-  if (patch.status !== undefined && patch.status !== entity.status) {
-    next["status"] = patch.status
-    undo["status"] = entity.status
-  }
-  if (patch.tagIds !== undefined && !deepEqual(patch.tagIds, entity.tagIds)) {
-    next["tagIds"] = [...patch.tagIds]
-    undo["tagIds"] = entity.tagIds
-  }
-  patchMaps(ctx, entity, patch, next, undo)
-  if (Object.keys(undo).length === 0) return null
-  for (const key of cleared) Reflect.deleteProperty(next, key)
-  return { next: next as unknown as T, undo: undo as AnnotationPatch & { frame?: number | null } }
+  return Object.keys(undo).length > 0 ? { next: next as T, undo } : null
 }

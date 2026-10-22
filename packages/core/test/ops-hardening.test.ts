@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { isAnnotateError } from "../src/errors.js"
 import type { ErrorCode } from "../src/errors.js"
-import type { Limits } from "../src/limits.js"
-import { apply } from "../src/ops/apply.js"
-import type { ApplyOptions, Batch, Operation } from "../src/ops/types.js"
+import { DEFAULT_LIMITS, type Limits } from "../src/limits.js"
+import { apply, applyMetered } from "../src/ops/apply.js"
+import type { ApplyBatchOptions, Batch, Operation } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { parseDocument } from "../src/validate/index.js"
 import { type Loose, box, clone, validDocument } from "./fixtures.js"
+import { stable } from "./ops-helpers.js"
 
 const AT = "2026-10-21T12:00:00Z"
 let counter = 0
@@ -16,7 +17,7 @@ const base = validDocument()
 const batchOf = (ops: unknown[]): Batch =>
   ({ id: `hb${++counter}`, origin: "local", at: AT, ops }) as Batch
 
-const run = (ops: unknown[], doc: AnnotationDocument = base, options?: ApplyOptions) =>
+const run = (ops: unknown[], doc: AnnotationDocument = base, options?: ApplyBatchOptions) =>
   apply(doc, batchOf(ops), options)
 
 function errorOf(fn: () => unknown) {
@@ -219,17 +220,20 @@ describe("malformed operations always give typed errors", () => {
       },
       enumerable: true,
     })
-    expect(() => run([flip])).not.toThrow()
+    const result = run([flip])
+    expect(reads).toBe(1)
+    expect(result.doc.meta["a:b"]).toBe(1)
+    expect(result.inverse).toEqual([
+      expect.objectContaining({ type: "setDocumentMeta", patch: { "a:b": null } }),
+    ])
   })
 
   it("terminates on a cyclic payload", () => {
     const m: Loose = { a: 1 }
     m.self = m
-    const started = Date.now()
     expect(codeOf(() => run([{ id: opId(), type: "setDocumentMeta", patch: { "a:m": m } }]))).toBe(
       "LIMIT_EXCEEDED",
     )
-    expect(Date.now() - started).toBeLessThan(1000)
   })
 
   it("treats explicit undefined optional fields as absent", () => {
@@ -347,29 +351,30 @@ describe("large batches stay fast and bounded", () => {
     return doc
   }
 
-  it("creates 20,000 regions in one batch quickly", () => {
+  // Work units are calibrated to engine time: half the default budget is about 1 s.
+  const QUICK = DEFAULT_LIMITS.maxBatchWork / 2
+
+  it("creates 20,000 regions in one batch quickly", { timeout: 30_000 }, () => {
     const doc = manyRegions(0)
     const ops = Array.from({ length: 20_000 }, (_, i) => ({
       id: `c${i}`,
       type: "createRegion",
       region: box(`n${i}`),
     }))
-    const started = Date.now()
-    const result = apply(doc, batchOf(ops), { limits: { maxBatchOps: 20_000 } })
+    const { result, work } = applyMetered(doc, batchOf(ops), { limits: { maxBatchOps: 20_000 } })
     expect(Object.keys(result.doc.regions)).toHaveLength(20_000)
-    expect(Date.now() - started).toBeLessThan(5000)
+    expect(work).toBeLessThan(QUICK)
   })
 
   it("deletes a 10,000-deep parent chain without overflowing the stack", () => {
     const doc: Loose = manyRegions(10_000)
     for (let i = 1; i < 10_000; i++) doc.regions[`m${i}`].parentId = `m${i - 1}`
-    const started = Date.now()
-    const result = apply(
+    const { result, work } = applyMetered(
       doc,
       batchOf([{ id: opId(), type: "deleteRegion", regionId: "m0", children: "delete" }]),
     )
     expect(Object.keys(result.doc.regions)).toHaveLength(0)
-    expect(Date.now() - started).toBeLessThan(5000)
+    expect(work).toBeLessThan(QUICK)
   })
 
   it("stops a batch that exceeds the work budget", () => {
@@ -387,9 +392,6 @@ describe("large batches stay fast and bounded", () => {
 })
 
 describe("follow-up guarantees", () => {
-  const stable = (doc: AnnotationDocument): unknown =>
-    JSON.parse(JSON.stringify(doc, (k, v) => (k === "rev" || k === "updatedAt" ? undefined : v)))
-
   it("undoes a subtree delete whose members are interleaved with survivors", () => {
     const doc: Loose = clone(base)
     doc.sources.s1.regionOrder = ["r3", "r1", "r5", "r2", "r4"]

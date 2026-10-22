@@ -1,5 +1,5 @@
 /** Stable error codes (Spec 0002). Messages are safe to show to users. */
-export const ERROR_CODES = [
+export const ERROR_CODES = /* @__PURE__ */ Object.freeze([
   "NOT_FOUND",
   "DUPLICATE_ID",
   "DUPLICATE_BATCH",
@@ -14,7 +14,7 @@ export const ERROR_CODES = [
   "SIZE_MISMATCH",
   "UNSUPPORTED_VERSION",
   "READ_ONLY",
-] as const
+] as const)
 
 export type ErrorCode = (typeof ERROR_CODES)[number]
 
@@ -46,16 +46,37 @@ export class AnnotateError extends Error {
   }
 }
 
-const CODE_SET: ReadonlySet<string> = new Set(ERROR_CODES)
+const CODE_SET: ReadonlySet<string> = /* @__PURE__ */ new Set(ERROR_CODES)
 
-/** Structural check, so errors that crossed a realm or bundle boundary are still recognised. */
+const isIssue = (value: unknown): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as ErrorIssue).path === "string" &&
+  typeof (value as ErrorIssue).message === "string"
+
+function isWellFormed(candidate: Record<string, unknown>): boolean {
+  const { name, code, message, issues, opIndex, opId } = candidate
+  return (
+    name === "AnnotateError" &&
+    typeof code === "string" &&
+    CODE_SET.has(code) &&
+    typeof message === "string" &&
+    (issues === undefined || (Array.isArray(issues) && issues.every(isIssue))) &&
+    (opIndex === undefined || typeof opIndex === "number") &&
+    (opId === undefined || typeof opId === "string")
+  )
+}
+
+/**
+ * Structural check, so errors that crossed a realm or bundle boundary are
+ * still recognised. Detail fields must have their documented types; a hostile
+ * value (throwing getters, proxies) is simply not an AnnotateError.
+ */
 export function isAnnotateError(value: unknown): value is AnnotateError {
   if (typeof value !== "object" || value === null) return false
-  const candidate = value as { name?: unknown; code?: unknown; message?: unknown }
-  return (
-    candidate.name === "AnnotateError" &&
-    typeof candidate.code === "string" &&
-    CODE_SET.has(candidate.code) &&
-    typeof candidate.message === "string"
-  )
+  try {
+    return isWellFormed(value as Record<string, unknown>)
+  } catch {
+    return false
+  }
 }

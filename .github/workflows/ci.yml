@@ -15,6 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -22,6 +23,8 @@ jobs:
     steps:
       # Third-party actions are pinned to full commit SHAs (ADR 0004).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -32,6 +35,10 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
+      # The suite again with runtime code generation disabled, as under a strict CSP.
+      - run: pnpm --filter annotate-this-core test:csp
+      # Fails when coverage drops below the thresholds in vitest.config.ts (80%).
+      - run: pnpm --filter annotate-this-core coverage
       - run: pnpm build
       - run: pnpm check:package
       - run: pnpm check:size

@@ -1,4 +1,4 @@
-import { safeParse } from "valibot"
+import { type GenericSchema, safeParse } from "valibot"
 import { AnnotateError } from "../errors.js"
 import type { Limits } from "../limits.js"
 import { RegionSchema } from "../schema/annotation.js"
@@ -13,12 +13,20 @@ import { regionFrameIssue } from "../validate/video.js"
 import type { OpContext } from "./context.js"
 
 // How deep a value may nest when it sits `level` levels below the document root (root = 1).
-export const depthAllowance = (limits: Limits, level: number): number =>
+const depthAllowance = (limits: Limits, level: number): number =>
   limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE - (level - 1)
 
-// Document levels: doc > regions > region > geometry.
-export const REGION_LEVEL = 3
-export const GEOMETRY_LEVEL = 4
+// Document levels (root = 1), where each kind of payload sits:
+// doc > regions > region > geometry; doc > sources > source > allowedArea / scale;
+// doc > config > allowedArea / meta; doc > config > record > definition.
+export const LEVELS = /* @__PURE__ */ Object.freeze({
+  region: 3,
+  geometry: 4,
+  source: 3,
+  sourceField: 4,
+  configField: 3,
+  definition: 4,
+})
 
 // Fails with LIMIT_EXCEEDED when `value` would nest deeper than the document budget allows at `level`.
 export function assertDepth(value: unknown, limits: Limits, level: number, what: string): void {
@@ -28,15 +36,17 @@ export function assertDepth(value: unknown, limits: Limits, level: number, what:
   }
 }
 
-// Parses a region shape; `validateRegion` returns the parsed region, which is what gets stored.
-export function parseRegion(input: unknown): Region {
-  const parsed = safeParse(RegionSchema, input, { abortEarly: true })
+// Parses an entity payload with its document schema; the parsed copy is what gets stored.
+export function parseWith<T>(schema: GenericSchema<unknown, T>, input: unknown, what: string): T {
+  const parsed = safeParse(schema, input, { abortEarly: true })
   if (!parsed.success) {
-    const message = clip(parsed.issues[0]?.message ?? "Invalid region")
-    throw new AnnotateError("INVALID_DOCUMENT", `region: ${message}`)
+    const message = clip(parsed.issues[0]?.message ?? "Invalid value")
+    throw new AnnotateError("INVALID_DOCUMENT", `${what}: ${message}`)
   }
   return parsed.output
 }
+
+export const parseRegion = (input: unknown): Region => parseWith(RegionSchema, input, "region")
 
 // Work units for re-validating a region: its vertices plus the values that get walked.
 function regionCost(region: Region): number {

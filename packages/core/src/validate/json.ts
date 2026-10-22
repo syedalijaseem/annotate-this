@@ -2,7 +2,7 @@ import { AnnotateError } from "../errors.js"
 import { type Limits, resolveLimits } from "../limits.js"
 import type { AnnotationDocument } from "../types.js"
 import { STRUCTURE_DEPTH_ALLOWANCE } from "./depth.js"
-import { type ParseOptions, parseDocument } from "./index.js"
+import { type ParseOptions, parseInput } from "./index.js"
 
 /** Exact UTF-8 size of a JS string, without allocating the encoded bytes. */
 export function utf8ByteLength(text: string): number {
@@ -79,5 +79,6 @@ export function parseDocumentJson(text: string, options: ParseOptions = {}): Ann
     // Deliberately not echoing the engine's message: it can quote part of the input.
     throw new AnnotateError("INVALID_DOCUMENT", "Document is not valid JSON")
   }
-  return parseDocument(parsed, options)
+  // Fresh JSON.parse output is plain and shared with nobody: checked, not copied.
+  return parseInput(parsed, options, false)
 }

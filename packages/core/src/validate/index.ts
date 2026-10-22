@@ -1,87 +1,28 @@
 import { getDotPath, safeParse } from "valibot"
 import { AnnotateError } from "../errors.js"
 import { type Limits, resolveLimits } from "../limits.js"
-import { DocumentSchema, SCHEMA_MAJOR } from "../schema/document.js"
+import { DocumentSchema } from "../schema/document.js"
 import type { AnnotationDocument } from "../types.js"
-import { STRUCTURE_DEPTH_ALLOWANCE, findBudgetBreach, isPlainJson } from "./depth.js"
 import { checkGeometryRules } from "./geometry-rules.js"
 import { checkIdentity, checkOrders } from "./identity.js"
 import { type Issue, fail } from "./issues.js"
 import { checkLabels } from "./labels.js"
 import { checkLimits } from "./limit-checks.js"
 import { checkReferences } from "./references.js"
+import { snapshotDocument } from "./snapshot.js"
 import { checkVideo } from "./video.js"
 
 export interface ParseOptions {
   limits?: Partial<Limits>
 }
 
-const countKeys = (value: unknown): number =>
-  typeof value === "object" && value !== null ? Object.keys(value).length : 0
-
-const BREACH_MESSAGES = {
-  depth: () => "Nesting is too deep to validate",
-  nodes: (limits: Limits) => `More than ${limits.maxDocumentNodes} values in the document`,
-  entries: (limits: Limits) => `An object has more than ${limits.maxEntries} keys`,
-} as const
-
-/** Cheap checks that run before the schema walks the whole input. */
-function guardShape(input: unknown, limits: Limits): void {
-  const fields = (typeof input === "object" && input !== null ? input : {}) as Record<
-    string,
-    unknown
-  >
-  if (countKeys(fields.regions) + countKeys(fields.tracks) > limits.maxAnnotations) {
-    throw new AnnotateError(
-      "LIMIT_EXCEEDED",
-      `regions: More than ${limits.maxAnnotations} annotations`,
-      {
-        issues: [{ path: "regions", message: `More than ${limits.maxAnnotations} annotations` }],
-      },
-    )
-  }
-  const breach = findBudgetBreach(input, {
-    depth: limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE,
-    nodes: limits.maxDocumentNodes,
-    entries: limits.maxEntries,
-  })
-  if (breach !== null) {
-    const message = BREACH_MESSAGES[breach](limits)
-    throw new AnnotateError("LIMIT_EXCEEDED", `document: ${message}`, {
-      issues: [{ path: "document", message }],
-    })
-  }
-  if (!isPlainJson(input)) {
-    throw new AnnotateError("INVALID_DOCUMENT", "document: contains a value that is not JSON", {
-      issues: [{ path: "document", message: "Contains a value that is not JSON" }],
-    })
-  }
-}
-
-/** Reads the major version without trusting the rest of the input. */
-function unsupportedMajor(input: unknown): number | null {
-  if (typeof input !== "object" || input === null) return null
-  const version = (input as { schemaVersion?: unknown }).schemaVersion
-  if (typeof version !== "string") return null
-  const match = /^(\d+)\./.exec(version)
-  const major = match ? Number(match[1]) : null
-  return major !== null && major !== SCHEMA_MAJOR ? major : null
-}
-
 /** Exotic inputs (throwing getters or proxies) must still produce a typed error. */
-function readUntrusted(input: unknown, limits: Limits) {
+function readUntrusted(input: unknown, limits: Limits, copy: boolean) {
   try {
-    const major = unsupportedMajor(input)
-    if (major !== null) {
-      throw new AnnotateError(
-        "UNSUPPORTED_VERSION",
-        `Document schema ${major}.x is not supported (this library reads ${SCHEMA_MAJOR}.x)`,
-      )
-    }
-    guardShape(input, limits)
+    const snapshot = snapshotDocument(input, limits, copy)
     // Stop at the first problem: a document of a million bad elements must not
     // allocate a million issue objects only to report the first few.
-    return safeParse(DocumentSchema, input, { abortEarly: true })
+    return safeParse(DocumentSchema, snapshot, { abortEarly: true })
   } catch (error) {
     if (error instanceof AnnotateError) throw error
     throw new AnnotateError("INVALID_DOCUMENT", "document: the input could not be read", {
@@ -112,8 +53,18 @@ function invariantIssues(doc: AnnotationDocument, limits: Limits): Issue[] {
  * Unknown fields are preserved. The input is never mutated.
  */
 export function parseDocument(input: unknown, options: ParseOptions = {}): AnnotationDocument {
+  return parseInput(input, options, true)
+}
+
+// parseDocument; `copy` false skips building the snapshot, for input that is
+// fresh JSON.parse output (plain, own data properties only, aliased by nobody).
+export function parseInput(
+  input: unknown,
+  options: ParseOptions,
+  copy: boolean,
+): AnnotationDocument {
   const limits = resolveLimits(options.limits)
-  const result = readUntrusted(input, limits)
+  const result = readUntrusted(input, limits, copy)
   if (!result.success) {
     const issues: Issue[] = result.issues.map((entry) => ({
       code: "INVALID_DOCUMENT",

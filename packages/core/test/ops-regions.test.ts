@@ -4,7 +4,7 @@ import type { ErrorCode } from "../src/errors.js"
 import type { Limits } from "../src/limits.js"
 import { apply } from "../src/ops/apply.js"
 import { without } from "../src/ops/util.js"
-import type { ApplyOptions, Batch, BatchOrigin, Operation } from "../src/ops/types.js"
+import type { ApplyBatchOptions, Batch, BatchOrigin, Operation } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { parseDocument } from "../src/validate/index.js"
 import { type Loose, box, clone, validDocument } from "./fixtures.js"
@@ -22,7 +22,7 @@ const batchOf = (ops: Operation[], origin: BatchOrigin = "local"): Batch => ({
 })
 
 /** Applies ops as one batch to a deep-frozen copy, which also proves the input is never mutated. */
-function run(doc: AnnotationDocument, ops: Operation[], options?: ApplyOptions) {
+function run(doc: AnnotationDocument, ops: Operation[], options?: ApplyBatchOptions) {
   return apply(deepFreeze(clone(doc)), batchOf(ops), options)
 }
 

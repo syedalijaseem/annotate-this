@@ -18,8 +18,6 @@ export interface GeometryVisit {
   geometry: Geometry
   path: string
   sourceId: string
-  /** Set when the geometry belongs to a track keyframe. */
-  trackId?: string
 }
 
 /** Visits every geometry in the document: region geometry and track keyframe geometry. */
@@ -33,7 +31,6 @@ export function* walkGeometries(doc: AnnotationDocument): Generator<GeometryVisi
         geometry: keyframe.geometry,
         path: `tracks.${id}.keyframes.${i}.geometry`,
         sourceId: track.sourceId,
-        trackId: id,
       }
     }
   }

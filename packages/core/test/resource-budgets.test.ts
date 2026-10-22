@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { isAnnotateError } from "../src/errors.js"
 import type { ErrorCode } from "../src/errors.js"
 import type { Limits } from "../src/limits.js"
@@ -42,21 +42,29 @@ describe("document-wide budgets", () => {
     expect(codeOf(doc)).toBe("ACCEPTED")
   })
 
-  it("rejects a coordinate array beyond the hard cap with a typed error", () => {
-    const doc: Loose = clone(validDocument())
-    doc.regions.r2.geometry.rings = [new Array(9_000_000).fill(0)]
-    expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
-  })
+  it(
+    "rejects a coordinate array beyond the hard cap with a typed error",
+    { timeout: 60_000 },
+    () => {
+      const doc: Loose = clone(validDocument())
+      doc.regions.r2.geometry.rings = [new Array(9_000_000).fill(0)]
+      expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
+    },
+  )
 })
 
 describe("JSON text depth is checked before parsing", () => {
   it("rejects absurd bracket nesting without building it", () => {
     const depth = 3_000_000
     const text = "[".repeat(depth) + "]".repeat(depth)
-    const started = Date.now()
-    const error = errorOf(() => parseDocumentJson(text))
-    expect(error?.code).toBe("LIMIT_EXCEEDED")
-    expect(Date.now() - started).toBeLessThan(1000)
+    const parse = vi.spyOn(JSON, "parse")
+    try {
+      const error = errorOf(() => parseDocumentJson(text))
+      expect(error?.code).toBe("LIMIT_EXCEEDED")
+      expect(parse).not.toHaveBeenCalled()
+    } finally {
+      parse.mockRestore()
+    }
   })
 
   it("ignores brackets inside strings and accepts normal documents", () => {

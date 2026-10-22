@@ -1,31 +1,34 @@
 import { AnnotateError } from "../errors.js"
 import type { ID } from "../types.js"
 import { clip } from "../validate/issues.js"
-import type { Charge } from "./draft.js"
+import type { Charge } from "./charge.js"
 import type { Position } from "./types.js"
 
-// Work units (Limits.maxBatchWork): a scan costs one unit per entry compared
-// (ids are compared by content), a splice one unit per 32 entries shifted.
-const SHIFTS_PER_UNIT_LOG2 = 5
+// Work units (see Limits.maxBatchWork): a native indexOf scan costs one unit
+// per 8 entries compared (about 2.5 ns per entry, 5 ns for long ids that are
+// not interned), a splice one unit per 128 entries shifted (a memory move).
+const SCANS_PER_UNIT_LOG2 = 3
+const SHIFTS_PER_UNIT_LOG2 = 7
 
+// Orders hold region, source, class or tag ids; messages name the entry, not its kind.
 const missingAnchor = (id: ID): AnnotateError =>
-  new AnnotateError("NOT_FOUND", `Region "${clip(id)}" does not exist`)
+  new AnnotateError("NOT_FOUND", `Anchor "${clip(id)}" is not in this order`)
 
 const selfAnchor = (): AnnotateError =>
-  new AnnotateError("INVALID_DOCUMENT", "A region cannot be placed after itself")
+  new AnnotateError("INVALID_DOCUMENT", "An entry cannot be placed after itself")
 
 const notOrdered = (id: ID): AnnotateError =>
-  new AnnotateError("INVALID_DOCUMENT", `Region "${clip(id)}" is not in its source's order`)
+  new AnnotateError("INVALID_DOCUMENT", `"${clip(id)}" is missing from its order`)
 
 // Index of `id` in `order`, or -1; charged by how far the scan went. The top entry is checked first.
-export function find(charge: Charge, order: readonly ID[], id: ID): number {
+function find(charge: Charge, order: readonly ID[], id: ID): number {
   const last = order.length - 1
   if (last >= 0 && order[last] === id) {
     charge(1)
     return last
   }
   const index = order.indexOf(id)
-  charge(index < 0 ? order.length + 1 : index + 1)
+  charge(1 + ((index < 0 ? order.length : index) >>> SCANS_PER_UNIT_LOG2))
   return index
 }
 
@@ -126,4 +129,52 @@ export function removeEntries(charge: Charge, order: ID[], removed: readonly ID[
   for (const id of order) if (!doomed.has(id)) order[write++] = id
   order.length = write
   return positions
+}
+
+// Stands for "below every entry" in placeAll.
+const BOTTOM = Symbol("bottom")
+type Anchor = ID | typeof BOTTOM
+
+// The order that inserting each entry (ids not in `order`) at its position,
+// one after another, would produce: the same result as one insertionIndex +
+// insertAt per entry, but linear. An entry placed after an anchor ends up
+// directly above it, so the entries above one anchor read latest first, each
+// followed by whatever was placed above it; one pre-order walk writes them out.
+export function placeAll(
+  charge: Charge,
+  order: readonly ID[],
+  entries: readonly { id: ID; position: Position }[],
+): ID[] {
+  charge(2 * order.length + 2 * entries.length)
+  // Local working structures, filled in place: this is what keeps it linear.
+  const known = new Set(order)
+  const above = new Map<Anchor, ID[]>()
+  let top: Anchor = order.length > 0 ? (order[order.length - 1] as ID) : BOTTOM
+  for (const { id, position } of entries) {
+    let anchor: Anchor = position === "top" ? top : BOTTOM
+    if (typeof position === "object") {
+      if (position.after === id) throw selfAnchor()
+      if (!known.has(position.after)) throw missingAnchor(position.after)
+      anchor = position.after
+    }
+    if (anchor === top) top = id
+    const list = above.get(anchor)
+    if (list) list.push(id)
+    else above.set(anchor, [id])
+    known.add(id)
+  }
+  const result: ID[] = []
+  const emitAbove = (anchor: Anchor): void => {
+    const stack = [...(above.get(anchor) ?? [])]
+    for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+      result.push(id)
+      for (const next of above.get(id) ?? []) stack.push(next)
+    }
+  }
+  emitAbove(BOTTOM)
+  for (const id of order) {
+    result.push(id)
+    emitAbove(id)
+  }
+  return result
 }

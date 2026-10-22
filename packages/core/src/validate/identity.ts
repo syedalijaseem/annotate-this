@@ -20,19 +20,21 @@ function keyMatchesId(kind: string, record: Keyed): Issue[] {
   return issues
 }
 
-/** All entity ids share one flat id space (Spec 0001). */
+// Every id-keyed entity record, with its path.
+const entityRecords = (doc: AnnotationDocument): [string, Keyed][] => [
+  ["sources", doc.sources],
+  ["regions", doc.regions],
+  ["tracks", doc.tracks],
+  ["config.classes", doc.config.classes],
+  ["config.tags", doc.config.tags],
+  ["config.skeletons", doc.config.skeletons],
+]
+
+/** All entity ids and the document id share one flat id space (Spec 0001). */
 function uniqueIds(doc: AnnotationDocument): Issue[] {
-  const seen = new Map<string, string>()
+  const seen = new Map<string, string>([[doc.id, "the document id"]])
   const issues: Issue[] = []
-  const kinds: [string, Keyed][] = [
-    ["sources", doc.sources],
-    ["regions", doc.regions],
-    ["tracks", doc.tracks],
-    ["config.classes", doc.config.classes],
-    ["config.tags", doc.config.tags],
-    ["config.skeletons", doc.config.skeletons],
-  ]
-  for (const [kind, record] of kinds) {
+  for (const [kind, record] of entityRecords(doc)) {
     for (const entity of Object.values(record)) {
       const previous = seen.get(entity.id)
       if (previous !== undefined) {
@@ -47,6 +49,21 @@ function uniqueIds(doc: AnnotationDocument): Issue[] {
         seen.set(entity.id, `${kind}.${entity.id}`)
       }
     }
+  }
+  return issues
+}
+
+/** Change sets name the config "config" (Spec 0002), so no entity or document may use that id. */
+export const RESERVED_ID = "config"
+
+function reservedIds(doc: AnnotationDocument): Issue[] {
+  const issues = entityRecords(doc)
+    .filter(([, record]) => Object.hasOwn(record, RESERVED_ID))
+    .map(([kind]) =>
+      issue("INVALID_DOCUMENT", `${kind}.${RESERVED_ID}`, `Id "${RESERVED_ID}" is reserved`),
+    )
+  if (doc.id === RESERVED_ID) {
+    issues.push(issue("INVALID_DOCUMENT", "id", `Id "${RESERVED_ID}" is reserved`))
   }
   return issues
 }
@@ -125,6 +142,7 @@ export function checkIdentity(doc: AnnotationDocument): Issue[] {
     ...keyMatchesId("config.classes", doc.config.classes),
     ...keyMatchesId("config.tags", doc.config.tags),
     ...keyMatchesId("config.skeletons", doc.config.skeletons),
+    ...reservedIds(doc),
     ...uniqueIds(doc),
   ]
 }

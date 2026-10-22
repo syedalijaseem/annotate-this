@@ -1,9 +1,8 @@
 import { AnnotateError } from "../errors.js"
 import type { Limits } from "../limits.js"
-import type { Charge, Draft } from "./draft.js"
-import type { Operation } from "./types.js"
-
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+import type { Charge } from "./charge.js"
+import type { Draft } from "./draft.js"
+import type { DistributiveOmit, Operation } from "./types.js"
 
 // An inverse operation before the engine gives it an id.
 export type InverseOp = DistributiveOmit<Operation, "id">
