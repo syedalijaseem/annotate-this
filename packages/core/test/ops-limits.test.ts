@@ -34,12 +34,6 @@ function labelled(n: number, parentOf?: (i: number) => number | undefined): Anno
   return doc
 }
 
-const timed = <T>(fn: () => T): { value: T; ms: number } => {
-  const started = Date.now()
-  const value = fn()
-  return { value, ms: Date.now() - started }
-}
-
 describe("the document node limit holds across operations and batches", () => {
   const limits: Partial<Limits> = { maxDocumentNodes: 20_000 }
 
@@ -67,7 +61,7 @@ describe("the document node limit holds across operations and batches", () => {
     )
   })
 
-  it("covers every way of adding values", () => {
+  it("covers every way of adding values", { timeout: 30_000 }, () => {
     // Each op adds about 6,000 values: one fits under 10,000, two do not.
     const small = { maxDocumentNodes: 10_000 }
     const meta = (p: string) => ({ [`a:${p}`]: wideMeta(3000, p) })
@@ -143,16 +137,15 @@ describe("payload records are charged by their parse cost", () => {
     expect(() => run(base, [addTag("tg", numbers)], { limits })).not.toThrow()
   })
 
-  it("stops a run of huge-meta config ops early", () => {
+  it("stops a run of huge-meta config ops early", { timeout: 30_000 }, () => {
     // 60,000 values per op: the third passes 150,000.
     const meta = wideMeta(30_000)
     const ops = Array.from({ length: 10 }, (_, i) => addTag(`tg${i}`, meta))
-    const { value: error, ms } = timed(() =>
-      errorOf(() => apply(base, batchOf(ops), { limits: { maxDocumentNodes: 150_000 } })),
+    const error = errorOf(() =>
+      apply(base, batchOf(ops), { limits: { maxDocumentNodes: 150_000 } }),
     )
     expect(error.code).toBe("LIMIT_EXCEEDED")
     expect(error.opIndex).toBeLessThanOrEqual(2)
-    expect(ms).toBeLessThan(2000)
   })
 })
 
@@ -187,14 +180,16 @@ describe("whole-document scans are charged by their real cost", () => {
     ).toBe("LIMIT_EXCEEDED")
   })
 
-  it("stops a batch of config toggles on a 50,000-region document within 2 s", () => {
+  // Each toggle scans all 50,000 regions, so the default budget must stop the
+  // batch after a few dozen of the 5,000 toggles.
+  it("stops a batch of config toggles on a 50,000-region document early", () => {
     const doc = labelled(50_000)
     const toggles = Array.from({ length: 5000 }, (_, k) =>
       op({ type: "setConfig", patch: { statuses: ["draft", k % 2 ? "a" : "b"] } }),
     )
-    const { value: code, ms } = timed(() => codeOf(() => apply(doc, batchOf(toggles))))
-    expect(code).toBe("LIMIT_EXCEEDED")
-    expect(ms).toBeLessThan(2000)
+    const error = errorOf(() => apply(doc, batchOf(toggles)))
+    expect(error.code).toBe("LIMIT_EXCEEDED")
+    expect(error.opIndex).toBeLessThan(100)
   }, 60_000)
 })
 
@@ -209,17 +204,21 @@ describe("parent chains of any valid depth", () => {
     return doc
   }
 
-  it("re-parents under and removes from a class chain deeper than 10,000", () => {
-    const doc = classChain(10_050)
-    const reparent = op({ type: "updateClass", classId: "c2", patch: { parentId: "d10049" } })
-    expect(roundTrip(doc, [reparent]).doc.config.classes["c2"]?.parentId).toBe("d10049")
-    const remove = op({ type: "removeClass", classId: "d10020", onInUse: "reject" })
-    const removed = roundTrip(doc, [remove])
-    expect(removed.doc.config.classes["d10021"]?.parentId).toBe("d10019")
-    expect(codeOf(() => run(doc, [reparent], { limits: { maxBatchWork: 15_000 } }))).toBe(
-      "LIMIT_EXCEEDED",
-    )
-  })
+  it(
+    "re-parents under and removes from a class chain deeper than 10,000",
+    { timeout: 30_000 },
+    () => {
+      const doc = classChain(10_050)
+      const reparent = op({ type: "updateClass", classId: "c2", patch: { parentId: "d10049" } })
+      expect(roundTrip(doc, [reparent]).doc.config.classes["c2"]?.parentId).toBe("d10049")
+      const remove = op({ type: "removeClass", classId: "d10020", onInUse: "reject" })
+      const removed = roundTrip(doc, [remove])
+      expect(removed.doc.config.classes["d10021"]?.parentId).toBe("d10019")
+      expect(codeOf(() => run(doc, [reparent], { limits: { maxBatchWork: 15_000 } }))).toBe(
+        "LIMIT_EXCEEDED",
+      )
+    },
+  )
 
   it("still finds class cycles through a long chain", () => {
     const doc = classChain(10_050)

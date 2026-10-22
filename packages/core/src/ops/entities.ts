@@ -1,5 +1,5 @@
 import { AnnotateError } from "../errors.js"
-import { FORBIDDEN_KEYS } from "../schema/primitives.js"
+import { isForbiddenKey } from "../schema/primitives.js"
 import type { AnnotationBase, ID, Region, Source } from "../types.js"
 import { RESERVED_ID } from "../validate/identity.js"
 import { type Issue, clip, fail } from "../validate/issues.js"
@@ -9,7 +9,7 @@ import type { Def, DefKind, Draft, OrderKind } from "./draft.js"
 import { findOrdered, moveEntry, moveIndex, positionAt } from "./order.js"
 import type { Position } from "./types.js"
 
-export const notFound = (what: string, id: ID): AnnotateError =>
+const notFound = (what: string, id: ID): AnnotateError =>
   new AnnotateError("NOT_FOUND", `${what} "${clip(String(id))}" does not exist`)
 
 export function needRegion(ctx: OpContext, id: ID): Region {
@@ -46,7 +46,7 @@ export function assertNone(issues: readonly Issue[]): void {
 
 // Ids that collide with prototype names or with the change set's "config" entry.
 export function assertUsableId(ctx: OpContext, id: ID): void {
-  if (FORBIDDEN_KEYS.has(id) || id === RESERVED_ID) {
+  if (isForbiddenKey(id) || id === RESERVED_ID) {
     throw new AnnotateError("INVALID_DOCUMENT", `Id "${clip(id)}" is reserved`)
   }
   if (ctx.draft.idInUse(id)) {
@@ -65,7 +65,7 @@ export function continuedRev<T extends { id: ID; rev: number }>(draft: Draft, en
 // Moves `id` within `order` to `position`. Returns the position that moves it
 // back, or null when it is already there (a no-op). `writable` yields the
 // draft-owned copy and is only called when something moves.
-export function moveWithin(
+function moveWithin(
   ctx: OpContext,
   order: readonly ID[],
   id: ID,

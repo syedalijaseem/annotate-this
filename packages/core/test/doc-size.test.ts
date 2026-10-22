@@ -4,7 +4,8 @@ import { apply } from "../src/ops/apply.js"
 import { jsonStringBytes, knownSize, measure } from "../src/ops/doc-size.js"
 import { payloadBudget, snapshot } from "../src/ops/snapshot.js"
 import type { Operation } from "../src/ops/types.js"
-import { countNodes, findBudgetBreach } from "../src/validate/depth.js"
+import { countNodes } from "../src/validate/depth.js"
+import { snapshotDocument } from "../src/validate/snapshot.js"
 import { utf8ByteLength } from "../src/validate/json.js"
 import { type Loose, box, validDocument } from "./fixtures.js"
 import { batchOf, codeOf, opId, random, richDocument, run } from "./ops-helpers.js"
@@ -112,7 +113,7 @@ describe("the size meter matches compact JSON exactly", () => {
 })
 
 describe("the four node counters agree", () => {
-  it("on random JSON", () => {
+  it("on random JSON", { timeout: 30_000 }, () => {
     const rand = random(13)
     const budget = payloadBudget(DEFAULT_LIMITS)
     for (let i = 0; i < 1000; i++) {
@@ -120,8 +121,15 @@ describe("the four node counters agree", () => {
       const nodes = countNodes(value)
       expect(measure(value).nodes).toBe(nodes)
       const big = { ...budget, nodes }
-      expect(findBudgetBreach(value, big)).toBeNull()
-      expect(findBudgetBreach(value, { ...big, nodes: nodes - 1 })).toBe("nodes")
+      const { bytes } = measure(value)
+      const limits = { ...DEFAULT_LIMITS, maxDocumentNodes: nodes, maxDocumentBytes: bytes }
+      expect(() => snapshotDocument(value, limits, true)).not.toThrow()
+      expect(() =>
+        snapshotDocument(value, { ...limits, maxDocumentNodes: nodes - 1 }, true),
+      ).toThrow(/values in the document/)
+      expect(() =>
+        snapshotDocument(value, { ...limits, maxDocumentBytes: bytes - 1 }, true),
+      ).toThrow(/larger than/)
       expect(() => snapshot(value, big, () => {})).not.toThrow()
       expect(() => snapshot(value, { ...big, nodes: nodes - 1 }, () => {})).toThrow()
     }

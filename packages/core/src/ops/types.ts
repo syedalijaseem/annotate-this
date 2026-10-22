@@ -194,7 +194,8 @@ export interface SourcePatch {
   meta?: MetaPatch
 }
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+/** Omit over each member of a union. Internal helper. */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 /** A source as passed to `addSource`: `rev` defaults to 0; its region and track orders must be empty. */
 export type NewSource = DistributiveOmit<Source, "rev"> & { rev?: number }
@@ -298,7 +299,10 @@ export interface UpdateSourceOp extends OperationBase {
   patch: SourcePatch
 }
 
-/** Deletes the source and all of its regions. */
+/**
+ * Deletes the source and all of its regions. A source that still has tracks
+ * is refused with IN_USE (tracks are not operation targets yet).
+ */
 export interface RemoveSourceOp extends OperationBase {
   type: "removeSource"
   sourceId: ID
@@ -354,7 +358,7 @@ export interface Batch {
   ops: Operation[]
 }
 
-export interface ApplyOptions {
+export interface ApplyBatchOptions {
   /** Skip `baseRev` checks. */
   ignoreRev?: boolean
   limits?: Partial<Limits>
@@ -380,6 +384,12 @@ export interface ChangeSet {
  * The documents in a result are immutable values: they share structure with
  * the input and `apply` remembers facts about them (such as their size) for
  * the next batch, so they must not be mutated.
+ */
+/**
+ * What `apply` returns. Treat every part as immutable: `doc` shares structure
+ * with the document it came from, and `inverse` operations may share nested
+ * objects (regions, definitions, meta) with that previous document. Mutating
+ * any of them corrupts both documents and apply's size accounting.
  */
 export interface ApplyResult {
   doc: AnnotationDocument

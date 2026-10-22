@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { isAnnotateError } from "../src/errors.js"
 import { apply } from "../src/ops/apply.js"
-import type { Operation, Position } from "../src/ops/types.js"
+import type { ChangeSet, Operation, Position } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { parseDocument } from "../src/validate/index.js"
 import { type Loose, box, clone, validDocument } from "./fixtures.js"
-import { random } from "./ops-helpers.js"
+import { deepFreeze, random } from "./ops-helpers.js"
 
 const pick = <T>(rand: () => number, items: readonly T[]): T =>
   items[Math.floor(rand() * items.length)] as T
@@ -21,6 +21,72 @@ function stable(doc: AnnotationDocument): unknown {
   return JSON.parse(
     JSON.stringify(doc, (key, value) => (key === "rev" || key === "updatedAt" ? undefined : value)),
   )
+}
+
+type Entities = Record<string, unknown>
+
+// Every entity a change set can name: the document's own fields (under its
+// id), the config (under "config"), sources, regions and tracks.
+function entities(doc: AnnotationDocument): Entities {
+  const { sources, regions, tracks, config, ...own } = doc
+  return { [doc.id]: own, config, ...sources, ...regions, ...tracks }
+}
+
+// Canonical JSON: key order is not a change.
+const canon = (value: unknown): string =>
+  JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.keys(v)
+            .sort()
+            .map((k) => [k, (v as Record<string, unknown>)[k]]),
+        )
+      : v,
+  )
+
+// The entity diff between two documents, which a change set must equal.
+function trueDiff(before: AnnotationDocument, after: AnnotationDocument): ChangeSet {
+  const a = entities(before)
+  const b = entities(after)
+  return {
+    created: Object.keys(b)
+      .filter((id) => !(id in a))
+      .sort(),
+    updated: Object.keys(a)
+      .filter((id) => id in b && canon(a[id]) !== canon(b[id]))
+      .sort(),
+    deleted: Object.keys(a)
+      .filter((id) => !(id in b))
+      .sort(),
+  }
+}
+
+const sortedChanges = (c: ChangeSet): ChangeSet => ({
+  created: [...c.created].sort(),
+  updated: [...c.updated].sort(),
+  deleted: [...c.deleted].sort(),
+})
+
+const revOf = (entity: unknown): number | undefined => (entity as { rev?: number }).rev
+
+// Applying the ops one per batch: every entity an op changes gains exactly one
+// rev, every other keeps its rev, and each change set is the true diff.
+function expectRevSteps(doc: AnnotationDocument, ops: Operation[], tag: string): void {
+  let step = doc
+  for (const [k, op] of ops.entries()) {
+    const at = "2026-10-21T12:00:00Z"
+    const next = apply(step, { id: `${tag}-${k}`, origin: "local", at, ops: [op] }).doc
+    if (next === step) continue
+    const before = entities(step)
+    const after = entities(next)
+    const diff = trueDiff(step, next)
+    for (const id of Object.keys(before)) {
+      if (!(id in after) || id === doc.id) continue
+      const delta = (revOf(after[id]) ?? 0) - (revOf(before[id]) ?? 0)
+      expect(delta, `rev of ${id} after ${op.type}`).toBe(diff.updated.includes(id) ? 1 : 0)
+    }
+    step = next
+  }
 }
 
 /** Wire round trip, as an integrator would persist and reload the result. */
@@ -130,7 +196,8 @@ describe("random batches (Spec 0002 property obligations)", () => {
         }
         let result
         try {
-          result = apply(doc, batch)
+          // Frozen: apply must never write to its input.
+          result = apply(deepFreeze(doc), batch)
         } catch (error) {
           // A rejected batch must be a typed error and must not have touched the document.
           expect(isAnnotateError(error)).toBe(true)
@@ -146,6 +213,17 @@ describe("random batches (Spec 0002 property obligations)", () => {
             ops: result.inverse,
           })
           expect(stable(undone.doc)).toEqual(stable(doc))
+          const redone = apply(undone.doc, {
+            ...batch,
+            id: `redo${seed}-${b}`,
+            ops: undone.inverse,
+          })
+          expect(stable(redone.doc)).toEqual(stable(result.doc))
+          expect(sortedChanges(result.changes)).toEqual(trueDiff(doc, result.doc))
+          expectRevSteps(doc, ops, `step${seed}-${b}`)
+        } else {
+          expect(result.changes).toEqual({ created: [], updated: [], deleted: [] })
+          expect(result.inverse).toEqual([])
         }
         doc = result.doc
       }

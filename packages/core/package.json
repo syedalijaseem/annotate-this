@@ -1,7 +1,7 @@
 {
   "name": "annotate-this-core",
   "version": "0.0.1",
-  "description": "Framework-agnostic, DOM-free core of annotate-this: document model, operations, store, undo and tools.",
+  "description": "Framework-agnostic, DOM-free core of annotate-this: document model and operations.",
   "license": "MIT",
   "author": "Syed Ali Jaseem <syedali0057@gmail.com>",
   "repository": {
@@ -39,7 +39,7 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check:package": "publint && attw --pack . --profile esm-only",
+    "check:package": "publint && attw --pack . --profile esm-only && node scripts/check-dist.mjs",
     "check:size": "size-limit",
     "coverage": "vitest run --coverage",
     "test:csp": "node --disallow-code-generation-from-strings ./node_modules/vitest/vitest.mjs run"

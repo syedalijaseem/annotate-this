@@ -1,4 +1,5 @@
 import type { Limits } from "../limits.js"
+import type { Charge } from "./charge.js"
 import type { AnnotationDocument, Config, ID, Meta, Region, Source } from "../types.js"
 import { RESERVED_ID } from "../validate/identity.js"
 import { own, walkGeometries } from "../validate/issues.js"
@@ -16,17 +17,17 @@ import { SizeMeter } from "./size-meter.js"
 import type { ChangeSet } from "./types.js"
 import { deepEqual } from "./util.js"
 
-// Spends work units against the batch budget; throws LIMIT_EXCEEDED when it runs out.
-export type Charge = (units: number) => void
-
 export type { DefKind }
 export type Def<K extends DefKind> = Config[K][string]
 // Orderings outside sources: the document's sourceOrder and the config's class and tag orders.
 export type OrderKind = "sourceOrder" | "classOrder" | "tagOrder"
 
+// Copying a record into a fresh dictionary costs about 0.7 µs per key.
+const COPY_KEY_COST = 16
+
 function copyRecord<V>(record: Record<string, V>, charge: Charge): Record<string, V> {
   const copy = Object.assign(Object.create(null) as Record<string, V>, record)
-  charge(Object.keys(copy).length)
+  charge(COPY_KEY_COST * Object.keys(copy).length)
   return copy
 }
 
@@ -78,7 +79,7 @@ export class Draft {
   private childIndex: Map<ID, Set<ID>> | null = null
   // Running vertex total (Limits.maxTotalVertices). Computed on first use.
   private vertices: number | null = null
-  annotationCount: number
+  private annotations: number
   // Tracks are not operation targets yet, so their number is fixed for the batch.
   private readonly trackCount: number
 
@@ -91,11 +92,16 @@ export class Draft {
     this.sourceCount = original.sourceOrder.length
     this.doc = { ...original }
     this.trackCount = Object.keys(original.tracks).length
-    this.annotationCount = Object.keys(original.regions).length + this.trackCount
+    this.annotations = Object.keys(original.regions).length + this.trackCount
+  }
+
+  // Regions plus tracks (Limits.maxAnnotations), kept up to date across the batch.
+  get annotationCount(): number {
+    return this.annotations
   }
 
   get regionCount(): number {
-    return this.annotationCount - this.trackCount
+    return this.annotations - this.trackCount
   }
 
   // Read-only view for validators and lookups. Replaced (never edited) when a record is first written.
@@ -172,7 +178,7 @@ export class Draft {
       this.unlink(region.id, previous.parentId)
     } else {
       this.occupy(this.regionCount, this.regionCount + 1, 1)
-      this.annotationCount += 1
+      this.annotations += 1
       this.markCreated(region.id)
     }
     if (previous?.sourceId !== region.sourceId) {
@@ -192,7 +198,7 @@ export class Draft {
     this.countVertices(previous, undefined)
     this.occupy(this.regionCount, this.regionCount - 1, 1)
     this.addToOrder(previous.sourceId, -1)
-    this.annotationCount -= 1
+    this.annotations -= 1
     this.unlink(id, previous.parentId)
     this.deletedRevs.set(id, previous.rev)
     this.markDeleted(id)
@@ -291,9 +297,10 @@ export class Draft {
   }
 
   removeDef(kind: DefKind, key: string): void {
-    const count = this.defCount(kind)
     const previous = this.def(kind, key)
-    if (previous) this.meter.change(defSize(key, previous, isOrdered(kind)), ZERO)
+    if (!previous) return
+    const count = this.defCount(kind)
+    this.meter.change(defSize(key, previous, isOrdered(kind)), ZERO)
     this.occupy(count, count - 1, isOrdered(kind) ? 2 : 1)
     Reflect.deleteProperty(this.configPart(kind), key)
     this.sizes.set(kind, count - 1)

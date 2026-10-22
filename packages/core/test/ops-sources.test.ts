@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { apply } from "../src/ops/apply.js"
+import { DEFAULT_LIMITS } from "../src/limits.js"
+import { apply, applyMetered } from "../src/ops/apply.js"
 import type { Operation } from "../src/ops/types.js"
 import type { AnnotationDocument, Region } from "../src/types.js"
 import { geometryWeight } from "../src/validate/limit-checks.js"
@@ -364,9 +365,9 @@ describe("removeSource", () => {
       doc.regions[`m${i}`] = region
       doc.sources.s1.regionOrder.push(`m${i}`)
     }
-    const started = Date.now()
-    const result = apply(doc, batchOf([remove("s1")]))
-    expect(Date.now() - started).toBeLessThan(2000)
+    // Work units are calibrated to engine time: a fifth of the default budget is quick.
+    const { result, work } = applyMetered(doc, batchOf([remove("s1")]))
+    expect(work).toBeLessThan(DEFAULT_LIMITS.maxBatchWork / 5)
     expect(Object.keys(result.doc.regions)).toHaveLength(0)
     expect(result.inverse).toHaveLength(2)
     const undone = apply(result.doc, { id: "undo", origin: "local", at: AT, ops: result.inverse })

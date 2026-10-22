@@ -1,5 +1,5 @@
 import { AnnotateError } from "../errors.js"
-import { FORBIDDEN_KEYS } from "../schema/primitives.js"
+import { isForbiddenKey } from "../schema/primitives.js"
 import type { AttributeDef, ClassDef } from "../types.js"
 import { clip, own } from "../validate/issues.js"
 import { attributeProblem } from "../validate/labels.js"
@@ -24,7 +24,7 @@ export function setAttributeDef(ctx: OpContext, op: SetAttributeDefOp): InverseO
   const { def } = op
   checkConfigRev(ctx, op)
   // Attribute keys are record keys, so prototype names are refused like entity ids.
-  if (FORBIDDEN_KEYS.has(def.key)) {
+  if (isForbiddenKey(def.key)) {
     throw new AnnotateError("INVALID_DOCUMENT", `Attribute key "${clip(def.key)}" is reserved`)
   }
   const current = ctx.draft.def("attributes", def.key)

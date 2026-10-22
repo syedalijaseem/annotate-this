@@ -1,13 +1,14 @@
 import { AnnotateError } from "../errors.js"
 import type { ID } from "../types.js"
 import { clip } from "../validate/issues.js"
-import type { Charge } from "./draft.js"
+import type { Charge } from "./charge.js"
 import type { Position } from "./types.js"
 
-// Work units (Limits.maxBatchWork, about 40 ns each): a scan costs one unit per
-// entry compared (ids are compared by content), a splice one unit per 32
-// entries shifted (a native memory move).
-const SHIFTS_PER_UNIT_LOG2 = 5
+// Work units (see Limits.maxBatchWork): a native indexOf scan costs one unit
+// per 8 entries compared (about 2.5 ns per entry, 5 ns for long ids that are
+// not interned), a splice one unit per 128 entries shifted (a memory move).
+const SCANS_PER_UNIT_LOG2 = 3
+const SHIFTS_PER_UNIT_LOG2 = 7
 
 // Orders hold region, source, class or tag ids; messages name the entry, not its kind.
 const missingAnchor = (id: ID): AnnotateError =>
@@ -20,14 +21,14 @@ const notOrdered = (id: ID): AnnotateError =>
   new AnnotateError("INVALID_DOCUMENT", `"${clip(id)}" is missing from its order`)
 
 // Index of `id` in `order`, or -1; charged by how far the scan went. The top entry is checked first.
-export function find(charge: Charge, order: readonly ID[], id: ID): number {
+function find(charge: Charge, order: readonly ID[], id: ID): number {
   const last = order.length - 1
   if (last >= 0 && order[last] === id) {
     charge(1)
     return last
   }
   const index = order.indexOf(id)
-  charge(index < 0 ? order.length + 1 : index + 1)
+  charge(1 + ((index < 0 ? order.length : index) >>> SCANS_PER_UNIT_LOG2))
   return index
 }
 

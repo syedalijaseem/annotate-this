@@ -2,7 +2,7 @@ import { expect } from "vitest"
 import { isAnnotateError } from "../src/errors.js"
 import type { ErrorCode } from "../src/errors.js"
 import { apply } from "../src/ops/apply.js"
-import type { ApplyOptions, ApplyResult, Batch } from "../src/ops/types.js"
+import type { ApplyBatchOptions, ApplyResult, Batch } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { parseDocument } from "../src/validate/index.js"
 import { type Loose, box, clone, validDocument, validVideoDocument } from "./fixtures.js"
@@ -36,8 +36,11 @@ export function deepFreeze<T>(value: T): T {
 }
 
 /** Applies ops as one batch to a deep-frozen copy, which also proves the input is never mutated. */
-export const run = (doc: AnnotationDocument, ops: unknown[], options?: ApplyOptions): ApplyResult =>
-  apply(deepFreeze(clone(doc)), batchOf(ops), options)
+export const run = (
+  doc: AnnotationDocument,
+  ops: unknown[],
+  options?: ApplyBatchOptions,
+): ApplyResult => apply(deepFreeze(clone(doc)), batchOf(ops), options)
 
 export function errorOf(fn: () => unknown) {
   try {
@@ -51,9 +54,39 @@ export function errorOf(fn: () => unknown) {
 
 export const codeOf = (fn: () => unknown): ErrorCode => errorOf(fn).code
 
-/** Drops fields an undo is allowed to change: every rev, and provenance.updatedAt. */
-export const stable = (doc: AnnotationDocument): unknown =>
-  JSON.parse(JSON.stringify(doc, (k, v) => (k === "rev" || k === "updatedAt" ? undefined : v)))
+// An entity's own rev and provenance.updatedAt; meta keys that happen to be
+// named "rev" or "updatedAt" are content and are kept.
+function withoutRevs<T extends object>(entity: T): T {
+  const copy = { ...entity } as Record<string, unknown>
+  delete copy["rev"]
+  if (typeof copy["provenance"] === "object" && copy["provenance"] !== null) {
+    const provenance: Record<string, unknown> = { ...copy["provenance"] }
+    delete provenance["updatedAt"]
+    copy["provenance"] = provenance
+  }
+  return copy as T
+}
+
+const mapRecord = <V extends object>(record: Record<string, V>): Record<string, V> =>
+  Object.fromEntries(Object.entries(record).map(([id, entity]) => [id, withoutRevs(entity)]))
+
+/**
+ * Drops fields an undo is allowed to change: the rev of the document, the
+ * config and every entity, and provenance.updatedAt. Only those entity
+ * fields: free-form content keeps keys of the same name.
+ */
+export function stable(doc: AnnotationDocument): unknown {
+  const { config } = doc
+  return JSON.parse(
+    JSON.stringify({
+      ...withoutRevs(doc),
+      config: withoutRevs(config),
+      sources: mapRecord(doc.sources),
+      regions: mapRecord(doc.regions),
+      tracks: mapRecord(doc.tracks),
+    }),
+  ) as unknown
+}
 
 /** Wire round trip, as an integrator would persist and reload the result. */
 export const reload = (doc: AnnotationDocument): AnnotationDocument =>
@@ -66,7 +99,7 @@ export const reload = (doc: AnnotationDocument): AnnotationDocument =>
 export function roundTrip(
   doc: AnnotationDocument,
   ops: unknown[],
-  options?: ApplyOptions,
+  options?: ApplyBatchOptions,
 ): ApplyResult {
   const result = run(doc, ops, options)
   expect(result.doc).not.toBe(doc)

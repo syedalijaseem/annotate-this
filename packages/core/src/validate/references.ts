@@ -28,7 +28,7 @@ export function findCycles(parents: ReadonlyMap<string, string>): string[] {
   return cyclic
 }
 
-const statusSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+const statusSets = /* @__PURE__ */ new WeakMap<readonly string[], ReadonlySet<string>>()
 
 /** Statuses are looked up once per annotation, so build the Set once per list. */
 export function statusSet(statuses: readonly string[]): ReadonlySet<string> {

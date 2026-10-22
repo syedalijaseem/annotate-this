@@ -3,6 +3,7 @@ import { createIdGenerator } from "./ids.js"
 import { SCHEMA_VERSION } from "./schema/document.js"
 import type { AnnotationDocument, ClassDef, ID, ImageSource, TagDef } from "./types.js"
 import { parseDocument } from "./validate/index.js"
+import { clip } from "./validate/issues.js"
 
 export interface ImageInput {
   src: string
@@ -61,13 +62,24 @@ interface LabelEntry {
   color?: string
 }
 
-function labelEntries(labels: readonly LabelInput[], nextId: () => ID, kind: string): LabelEntry[] {
-  const seen = new Set<ID>()
+// Ids are one flat space (Spec 0001): every id createDocument uses is claimed here.
+function claim(seen: Set<ID>, id: ID, kind: string): ID {
+  if (seen.has(id)) {
+    throw new AnnotateError("DUPLICATE_ID", `Duplicate ${kind} id "${clip(String(id))}"`)
+  }
+  seen.add(id)
+  return id
+}
+
+function labelEntries(
+  labels: readonly LabelInput[],
+  nextId: () => ID,
+  kind: string,
+  seen: Set<ID>,
+): LabelEntry[] {
   return labels.map((label) => {
     const entry = typeof label === "string" ? { name: label } : label
-    const id = entry.id ?? nextId()
-    if (seen.has(id)) throw new AnnotateError("DUPLICATE_ID", `Duplicate ${kind} id "${id}"`)
-    seen.add(id)
+    const id = claim(seen, entry.id ?? nextId(), kind)
     return {
       id,
       name: entry.name,
@@ -87,13 +99,18 @@ function indexById<T extends { id: ID }>(items: readonly T[]): Record<ID, T> {
  * Builds a valid document from simple inputs (the common "load these images
  * with these labels" case). The result has been through `parseDocument`, so
  * bad input (non-integer sizes, duplicate ids) fails here with a typed error.
+ * Ids share one flat space: an id generator that repeats itself, or an
+ * explicit label id equal to another id, fails with DUPLICATE_ID.
  */
 export function createDocument(input: CreateDocumentInput = {}): AnnotationDocument {
   const nextId = input.idGenerator ?? createIdGenerator()
-  const id = nextId()
-  const sources = (input.images ?? []).map((image) => buildSource(image, nextId()))
-  const classes = labelEntries(input.classes ?? [], nextId, "class").map(toClassDef)
-  const tags = labelEntries(input.tags ?? [], nextId, "tag").map(toTagDef)
+  const seen = new Set<ID>()
+  const id = claim(seen, nextId(), "document")
+  const sources = (input.images ?? []).map((image) =>
+    buildSource(image, claim(seen, nextId(), "image")),
+  )
+  const classes = labelEntries(input.classes ?? [], nextId, "class", seen).map(toClassDef)
+  const tags = labelEntries(input.tags ?? [], nextId, "tag", seen).map(toTagDef)
 
   const document: AnnotationDocument = {
     id,

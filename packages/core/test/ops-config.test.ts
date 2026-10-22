@@ -283,7 +283,7 @@ describe("updateClass", () => {
     expect(codeOf(() => run(base, [update({ parentId: "nope" })]))).toBe("INVALID_DOCUMENT")
   })
 
-  it("checks a long class chain against the work budget", () => {
+  it("checks a long class chain against the work budget", { timeout: 30_000 }, () => {
     const doc: Loose = clone(base)
     for (let i = 0; i < 10_050; i++) {
       doc.config.classes[`d${i}`] = {

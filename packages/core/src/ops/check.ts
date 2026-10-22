@@ -13,12 +13,20 @@ import { regionFrameIssue } from "../validate/video.js"
 import type { OpContext } from "./context.js"
 
 // How deep a value may nest when it sits `level` levels below the document root (root = 1).
-export const depthAllowance = (limits: Limits, level: number): number =>
+const depthAllowance = (limits: Limits, level: number): number =>
   limits.maxMetaDepth + STRUCTURE_DEPTH_ALLOWANCE - (level - 1)
 
-// Document levels: doc > regions > region > geometry.
-export const REGION_LEVEL = 3
-export const GEOMETRY_LEVEL = 4
+// Document levels (root = 1), where each kind of payload sits:
+// doc > regions > region > geometry; doc > sources > source > allowedArea / scale;
+// doc > config > allowedArea / meta; doc > config > record > definition.
+export const LEVELS = /* @__PURE__ */ Object.freeze({
+  region: 3,
+  geometry: 4,
+  source: 3,
+  sourceField: 4,
+  configField: 3,
+  definition: 4,
+})
 
 // Fails with LIMIT_EXCEEDED when `value` would nest deeper than the document budget allows at `level`.
 export function assertDepth(value: unknown, limits: Limits, level: number, what: string): void {

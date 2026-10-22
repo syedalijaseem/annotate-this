@@ -13,6 +13,7 @@ import {
 import type { Source, SourceScale } from "../types.js"
 import { BoxSchema } from "./geometry.js"
 import {
+  EPSILON,
   AttributesSchema,
   IdSchema,
   MetaSchema,
@@ -21,14 +22,15 @@ import {
   PositiveIntSchema,
   RevSchema,
   TextSchema,
+  merge,
 } from "./primitives.js"
 
-const sizeSchema = looseObject({ w: NonNegativeSchema, h: NonNegativeSchema })
+const sizeSchema = /* @__PURE__ */ looseObject({ w: NonNegativeSchema, h: NonNegativeSchema })
 
-export const ScaleSchema: GenericSchema<unknown, SourceScale> = looseObject({
-  pixelSize: exactOptional(sizeSchema),
-  realSize: exactOptional(
-    looseObject({ w: NonNegativeSchema, h: NonNegativeSchema, unit: TextSchema }),
+export const ScaleSchema: GenericSchema<unknown, SourceScale> = /* @__PURE__ */ looseObject({
+  pixelSize: /* @__PURE__ */ exactOptional(sizeSchema),
+  realSize: /* @__PURE__ */ exactOptional(
+    /* @__PURE__ */ looseObject({ w: NonNegativeSchema, h: NonNegativeSchema, unit: TextSchema }),
   ),
 })
 
@@ -37,36 +39,46 @@ const sourceEntries = {
   rev: RevSchema,
   name: TextSchema,
   uri: TextSchema,
-  thumbnailUri: exactOptional(TextSchema),
-  regionOrder: array(IdSchema),
-  classId: exactOptional(IdSchema),
-  tagIds: array(IdSchema),
+  thumbnailUri: /* @__PURE__ */ exactOptional(TextSchema),
+  regionOrder: /* @__PURE__ */ array(IdSchema),
+  classId: /* @__PURE__ */ exactOptional(IdSchema),
+  tagIds: /* @__PURE__ */ array(IdSchema),
   attributes: AttributesSchema,
-  comment: exactOptional(TextSchema),
-  allowedArea: exactOptional(BoxSchema),
-  scale: exactOptional(ScaleSchema),
+  comment: /* @__PURE__ */ exactOptional(TextSchema),
+  allowedArea: /* @__PURE__ */ exactOptional(BoxSchema),
+  scale: /* @__PURE__ */ exactOptional(ScaleSchema),
   meta: MetaSchema,
 }
 
-const ImageSourceSchema = looseObject({
-  ...sourceEntries,
-  kind: literal("image"),
-  width: PositiveIntSchema,
-  height: PositiveIntSchema,
-})
+const ImageSourceSchema = /* @__PURE__ */ looseObject(
+  merge(sourceEntries, {
+    kind: /* @__PURE__ */ literal("image"),
+    width: PositiveIntSchema,
+    height: PositiveIntSchema,
+  }),
+)
 
-const VideoSourceSchema = looseObject({
-  ...sourceEntries,
-  kind: literal("video"),
-  width: PositiveIntSchema,
-  height: PositiveIntSchema,
-  frameCount: PositiveIntSchema,
-  fps: exactOptional(pipe(number(), finite(), minValue(Number.EPSILON))),
-  timestamps: exactOptional(array(pipe(NumSchema, minValue(0)))),
-  trackOrder: array(IdSchema),
-})
+const VideoSourceSchema = /* @__PURE__ */ looseObject(
+  merge(sourceEntries, {
+    kind: /* @__PURE__ */ literal("video"),
+    width: PositiveIntSchema,
+    height: PositiveIntSchema,
+    frameCount: PositiveIntSchema,
+    fps: /* @__PURE__ */ exactOptional(
+      /* @__PURE__ */ pipe(
+        /* @__PURE__ */ number(),
+        /* @__PURE__ */ finite(),
+        /* @__PURE__ */ minValue(EPSILON),
+      ),
+    ),
+    timestamps: /* @__PURE__ */ exactOptional(
+      /* @__PURE__ */ array(/* @__PURE__ */ pipe(NumSchema, /* @__PURE__ */ minValue(0))),
+    ),
+    trackOrder: /* @__PURE__ */ array(IdSchema),
+  }),
+)
 
-export const SourceSchema: GenericSchema<unknown, Source> = variant("kind", [
+export const SourceSchema: GenericSchema<unknown, Source> = /* @__PURE__ */ variant("kind", [
   ImageSourceSchema,
   VideoSourceSchema,
 ])

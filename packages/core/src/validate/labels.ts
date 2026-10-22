@@ -7,7 +7,7 @@ import type {
 } from "../types.js"
 import { type Issue, MAX_ISSUES_PER_CHECK, issue, own, pushAll } from "./issues.js"
 
-const optionSets = new WeakMap<AttributeDef, ReadonlySet<string>>()
+const optionSets = /* @__PURE__ */ new WeakMap<AttributeDef, ReadonlySet<string>>()
 
 /** One Set per definition, so enum checks do not scan up to 1000 options per value. */
 function optionSet(def: AttributeDef): ReadonlySet<string> {

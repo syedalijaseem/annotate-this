@@ -1,9 +1,9 @@
 import {
   type GenericSchema,
   boolean,
+  check,
   finite,
   integer,
-  isoTimestamp,
   maxLength,
   maxValue,
   minValue,
@@ -18,15 +18,18 @@ import {
   union,
   unknown,
 } from "valibot"
-import { ID_PATTERN } from "../ids.js"
+import { ID_PATTERN_SOURCE } from "../ids.js"
 import type { AttributeValue, ID, JSONValue } from "../types.js"
 
-/** Keys that must never appear in user-keyed records. */
-export const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+// Keys that must never appear in user-keyed records. Module-private: a Set cannot be frozen.
+const FORBIDDEN_KEYS: ReadonlySet<string> = /* @__PURE__ */ new Set([
   "__proto__",
   "constructor",
   "prototype",
 ])
+
+/** Whether `key` must never appear in a user-keyed record (prototype pollution). */
+export const isForbiddenKey = (key: string): boolean => FORBIDDEN_KEYS.has(key)
 
 /** Hard cap on short config lists (statuses, tools, enum options), which are searched per annotation. */
 export const MAX_LIST_LENGTH = 1000
@@ -40,42 +43,90 @@ export const MAX_COORDINATES = 8_000_000
 /** Hard cap on the length of a custom geometry kind ("vendor:name"). */
 export const MAX_CUSTOM_KIND_LENGTH = 256
 
+/**
+ * `{ ...a, ...b }` for schema entry tables. A spread at module level counts as
+ * a side effect to bundlers; this call does not, so unused schemas tree-shake.
+ */
+/* @__NO_SIDE_EFFECTS__ */
+export function merge<A extends object, B extends object>(a: A, b: B): A & B {
+  return { ...a, ...b }
+}
+
+// Number.MAX_SAFE_INTEGER and Number.EPSILON as literals: bundlers treat a
+// global property read at module level as a possible side effect.
+const MAX_SAFE_INTEGER = 9_007_199_254_740_991
+export const EPSILON = 2.220446049250313e-16
+
 /** Record keys need a string-input schema (record() constrains the key's input type). */
-const KeySchema = pipe(string(), regex(ID_PATTERN))
+// A private RegExp instance: nothing outside this module can recompile it.
+const KeySchema = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ string(),
+  /* @__PURE__ */ regex(/* @__PURE__ */ new RegExp(ID_PATTERN_SOURCE)),
+)
 
 export const IdSchema: GenericSchema<unknown, ID> = KeySchema
 
-export const NumSchema: GenericSchema<unknown, number> = pipe(number(), finite())
-export const NonNegativeSchema: GenericSchema<unknown, number> = pipe(
-  number(),
-  finite(),
-  minValue(0),
+export const NumSchema: GenericSchema<unknown, number> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ number(),
+  /* @__PURE__ */ finite(),
 )
-export const IntSchema: GenericSchema<unknown, number> = pipe(
-  number(),
-  integer(),
-  minValue(0),
-  maxValue(Number.MAX_SAFE_INTEGER),
+export const NonNegativeSchema: GenericSchema<unknown, number> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ number(),
+  /* @__PURE__ */ finite(),
+  /* @__PURE__ */ minValue(0),
+)
+export const IntSchema: GenericSchema<unknown, number> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ number(),
+  /* @__PURE__ */ integer(),
+  /* @__PURE__ */ minValue(0),
+  /* @__PURE__ */ maxValue(MAX_SAFE_INTEGER),
 )
 /** Entity revision counter (Spec 0001). */
 export const RevSchema: GenericSchema<unknown, number> = IntSchema
-export const PositiveIntSchema: GenericSchema<unknown, number> = pipe(
-  number(),
-  integer(),
-  minValue(1),
-  maxValue(Number.MAX_SAFE_INTEGER),
+export const PositiveIntSchema: GenericSchema<unknown, number> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ number(),
+  /* @__PURE__ */ integer(),
+  /* @__PURE__ */ minValue(1),
+  /* @__PURE__ */ maxValue(MAX_SAFE_INTEGER),
 )
 
 /** Free text. Length limits beyond this hard cap are enforced by the configurable limits pass. */
-export const TextSchema: GenericSchema<unknown, string> = pipe(string(), maxLength(1_000_000))
-export const TimestampSchema: GenericSchema<unknown, string> = pipe(string(), isoTimestamp())
-export const ColorSchema: GenericSchema<unknown, string> = pipe(
-  string(),
-  regex(/^#[0-9a-fA-F]{6}$/),
+export const TextSchema: GenericSchema<unknown, string> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ string(),
+  /* @__PURE__ */ maxLength(1_000_000),
+)
+// ISO-8601 UTC (Spec 0001): seconds required, an optional 1 to 9 digit fraction, "Z".
+const UTC_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/
+
+/** True for an ISO-8601 UTC timestamp that names a real instant (no day or hour rollover). */
+export function isUtcTimestamp(value: string): boolean {
+  const match = UTC_TIMESTAMP.exec(value)
+  if (!match || !Number.isFinite(Date.parse(value))) return false
+  const [year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0] = match
+    .slice(1)
+    .map(Number)
+  if (year === 0 || hour > 23 || minute > 59 || second > 59) return false
+  // setUTCFullYear, unlike Date.UTC, does not map years 0-99 to 1900-1999.
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+}
+
+export const TimestampSchema: GenericSchema<unknown, string> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ string(),
+  /* @__PURE__ */ check(
+    isUtcTimestamp,
+    "Expected an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)",
+  ),
+)
+export const ColorSchema: GenericSchema<unknown, string> = /* @__PURE__ */ pipe(
+  /* @__PURE__ */ string(),
+  /* @__PURE__ */ regex(/^#[0-9a-fA-F]{6}$/),
 )
 
+/* @__NO_SIDE_EFFECTS__ */
 function rejectForbiddenKeys(): ReturnType<typeof rawCheck<unknown>> {
-  return rawCheck(({ dataset, addIssue }) => {
+  return /* @__PURE__ */ rawCheck(({ dataset, addIssue }) => {
     const input = dataset.value
     if (Array.isArray(input)) {
       addIssue({ message: "Expected an object but received an array" })
@@ -97,14 +148,15 @@ const withoutPrototype = <V>(value: Record<string, V>): Record<string, V> =>
  * key, which is safe but hides an attack; this checks the raw input first and
  * reports it. Keys must match the ID pattern and the result has no prototype.
  */
+/* @__NO_SIDE_EFFECTS__ */
 export function safeRecord<V>(
   value: GenericSchema<unknown, V>,
 ): GenericSchema<unknown, Record<string, V>> {
-  return pipe(
-    unknown(),
+  return /* @__PURE__ */ pipe(
+    /* @__PURE__ */ unknown(),
     rejectForbiddenKeys(),
-    record(KeySchema, value),
-    transform(withoutPrototype),
+    /* @__PURE__ */ record(KeySchema, value),
+    /* @__PURE__ */ transform(withoutPrototype),
   )
 }
 
@@ -183,10 +235,11 @@ function copyJson(input: unknown, objectOnly: boolean): { value: JSONValue } | {
   return { value: root.copy as JSONValue }
 }
 
+/* @__NO_SIDE_EFFECTS__ */
 function jsonSchema<T extends JSONValue>(objectOnly: boolean): GenericSchema<unknown, T> {
-  return pipe(
-    unknown(),
-    rawTransform(({ dataset, addIssue, NEVER }) => {
+  return /* @__PURE__ */ pipe(
+    /* @__PURE__ */ unknown(),
+    /* @__PURE__ */ rawTransform(({ dataset, addIssue, NEVER }) => {
       const result = copyJson(dataset.value, objectOnly)
       if ("error" in result) {
         addIssue({ message: result.error })
@@ -200,9 +253,9 @@ function jsonSchema<T extends JSONValue>(objectOnly: boolean): GenericSchema<unk
 export const MetaSchema: GenericSchema<unknown, Record<string, JSONValue>> = jsonSchema(true)
 export const JsonSchema: GenericSchema<unknown, JSONValue> = jsonSchema(false)
 
-export const AttributeValueSchema: GenericSchema<unknown, AttributeValue> = union([
+export const AttributeValueSchema: GenericSchema<unknown, AttributeValue> = /* @__PURE__ */ union([
   TextSchema,
   NumSchema,
-  boolean(),
+  /* @__PURE__ */ boolean(),
 ])
 export const AttributesSchema = safeRecord(AttributeValueSchema)

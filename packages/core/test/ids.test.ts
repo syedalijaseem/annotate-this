@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { ID_PATTERN, createIdGenerator, isValidId } from "../src/ids.js"
+import { isAnnotateError } from "../src/errors.js"
+import { ID_PATTERN_SOURCE, createIdGenerator, isValidId } from "../src/ids.js"
 
 describe("isValidId", () => {
   it.each(["a", "region-1", "A_b.c:d-9", "x".repeat(64)])("accepts %s", (id) => {
@@ -18,8 +19,9 @@ describe("isValidId", () => {
     expect(isValidId(null as unknown as string)).toBe(false)
   })
 
-  it("exposes the pattern used for schema validation", () => {
-    expect(ID_PATTERN.test("ok-id")).toBe(true)
+  it("exposes the pattern used for schema validation as source text", () => {
+    expect(new RegExp(ID_PATTERN_SOURCE).test("ok-id")).toBe(true)
+    expect(new RegExp(ID_PATTERN_SOURCE).test("no spaces")).toBe(false)
   })
 })
 
@@ -87,5 +89,32 @@ describe("createIdGenerator input checks", () => {
 
   it("rejects a random source that returns the wrong length", () => {
     expect(() => createIdGenerator({ randomBytes: () => new Uint8Array(3) })()).toThrow(/random/i)
+  })
+
+  it("throws typed errors (INVALID_DOCUMENT) for a bad clock, random source or missing crypto", () => {
+    const code = (fn: () => unknown) => {
+      try {
+        fn()
+      } catch (error) {
+        return isAnnotateError(error) ? error.code : "untyped"
+      }
+      return "none"
+    }
+    expect(code(() => createIdGenerator({ now: () => Number.NaN })())).toBe("INVALID_DOCUMENT")
+    expect(code(() => createIdGenerator({ randomBytes: () => new Uint8Array(3) })())).toBe(
+      "INVALID_DOCUMENT",
+    )
+    const original = Object.getOwnPropertyDescriptor(globalThis, "crypto")
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true })
+    try {
+      expect(code(() => createIdGenerator()())).toBe("INVALID_DOCUMENT")
+    } finally {
+      if (original) Object.defineProperty(globalThis, "crypto", original)
+    }
+    // The counter runs out within 4,096 ids at the last representable millisecond.
+    const last = createIdGenerator({ now: () => 2 ** 48 - 1 })
+    let outcome = "none"
+    for (let i = 0; i <= 0x1000 && outcome === "none"; i++) outcome = code(() => last())
+    expect(outcome).toBe("INVALID_DOCUMENT")
   })
 })

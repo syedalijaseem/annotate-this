@@ -63,7 +63,7 @@ function attributeStrings(
   for (const [key, value] of Object.entries(attributes)) check(`${path}.${key}`, textOf(value), max)
 }
 
-export type StringCheck = (path: string, value: string | undefined, max: number) => void
+type StringCheck = (path: string, value: string | undefined, max: number) => void
 
 /** A StringCheck that records LIMIT_EXCEEDED issues (at most MAX_ISSUES_PER_CHECK) into `issues`. */
 export const textLimit =

@@ -16,6 +16,16 @@ function codeOf(doc: unknown, limits?: Partial<Limits>): ErrorCode | "ACCEPTED" 
   }
 }
 
+function errorOfParse(doc: unknown) {
+  try {
+    parseDocument(doc)
+  } catch (error) {
+    if (isAnnotateError(error)) return error
+    throw error
+  }
+  throw new Error("expected parseDocument to throw")
+}
+
 const nest = (depth: number): unknown => {
   let value: unknown = 1
   for (let i = 0; i < depth; i++) value = { k: value }
@@ -209,10 +219,13 @@ describe("resource exhaustion", () => {
     expect(codeOf(doc, { maxAnnotations: 10 })).toBe("LIMIT_EXCEEDED")
   })
 
-  it("caps the number of mask runs", () => {
+  it("caps the number of mask runs before validating any run", { timeout: 60_000 }, () => {
     const doc: Loose = clone(validDocument())
-    doc.regions.r5.geometry.counts = new Array(5_000_000).fill(0).concat([8])
-    expect(codeOf(doc)).toBe("INVALID_DOCUMENT")
+    // Every run is invalid too: the cap must be what reports, so no run was walked.
+    doc.regions.r5.geometry.counts = new Array(5_000_000).fill(-1)
+    const error = errorOfParse(doc)
+    expect(error.code).toBe("INVALID_DOCUMENT")
+    expect(error.message).toMatch(/Too many mask runs/)
   })
 
   it("does not echo long attacker-controlled text in messages", () => {

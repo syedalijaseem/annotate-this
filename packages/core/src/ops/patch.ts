@@ -5,7 +5,7 @@ import { deepEqual } from "./util.js"
 type Fields = Record<string, unknown>
 
 // Patch fields that merge key by key (`null` deletes a key) instead of replacing the value.
-const MAP_FIELDS: ReadonlySet<string> = new Set(["attributes", "meta"])
+const MAP_FIELDS: ReadonlySet<string> = /* @__PURE__ */ new Set(["attributes", "meta"])
 
 // Merges a map patch (`null` deletes a key) into `current` without editing it.
 // Returns `null` when nothing changes; `undo` receives the old value of each

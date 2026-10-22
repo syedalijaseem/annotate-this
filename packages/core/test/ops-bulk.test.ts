@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { apply } from "../src/ops/apply.js"
+import { DEFAULT_LIMITS } from "../src/limits.js"
+import { apply, applyMetered } from "../src/ops/apply.js"
 import type { Operation, Position } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { type Loose, box, clone, validDocument } from "./fixtures.js"
@@ -27,18 +28,22 @@ const createRegions = (regions: Loose[], positions?: Position[]) =>
 const deleteRegions = (regionIds: string[], children: "delete" | "detach" = "detach") =>
   op({ type: "deleteRegions", regionIds, children })
 
-const timed = <T>(fn: () => T): { value: T; ms: number } => {
-  const started = Date.now()
-  const value = fn()
-  return { value, ms: Date.now() - started }
-}
+// Work units are calibrated to engine time (Limits.maxBatchWork): half the
+// default budget (about 1 s) is a deterministic stand-in for "an undo stays quick".
+const QUICK = DEFAULT_LIMITS.maxBatchWork / 2
 
 // Undo and redo as an integrator would run them: one batch each, default limits.
 function undoRedo(doc: AnnotationDocument, ops: Operation[]) {
   const result = apply(doc, batchOf(ops))
-  const undo = timed(() => apply(result.doc, batchOf(result.inverse)))
-  const redo = timed(() => apply(undo.value.doc, batchOf(undo.value.inverse)))
-  return { result, undone: undo.value, undoMs: undo.ms, redone: redo.value, redoMs: redo.ms }
+  const undo = applyMetered(result.doc, batchOf(result.inverse))
+  const redo = applyMetered(undo.result.doc, batchOf(undo.result.inverse))
+  return {
+    result,
+    undone: undo.result,
+    undoWork: undo.work,
+    redone: redo.result,
+    redoWork: redo.work,
+  }
 }
 
 describe("undoing a removeSource is one bounded batch", () => {
@@ -54,13 +59,13 @@ describe("undoing a removeSource is one bounded batch", () => {
     (_, n, parentOf) => {
       const doc = manyRegions(n, (i) => parentOf(i, n))
       const remove = op({ type: "removeSource", sourceId: "s1" })
-      const { result, undone, undoMs, redone, redoMs } = undoRedo(doc, [remove])
+      const { result, undone, undoWork, redone, redoWork } = undoRedo(doc, [remove])
       expect(result.inverse).toHaveLength(2)
       expect(result.inverse.map((o) => o.type)).toEqual(["addSource", "createRegions"])
-      expect(undoMs).toBeLessThan(2000)
+      expect(undoWork).toBeLessThan(QUICK)
       expect(order(undone.doc)).toEqual(order(doc))
       expect(stable(undone.doc)).toEqual(stable(doc))
-      expect(redoMs).toBeLessThan(2000)
+      expect(redoWork).toBeLessThan(QUICK)
       expect(stable(redone.doc)).toEqual(stable(result.doc))
     },
     60_000,
@@ -93,9 +98,9 @@ describe("undoing a large subtree delete is one bounded batch", () => {
   it("restores a 20,000-deep chain with one createRegions", () => {
     const doc = manyRegions(20_000, (i) => (i > 0 ? i - 1 : undefined))
     const remove = op({ type: "deleteRegion", regionId: "m0", children: "delete" })
-    const { result, undone, undoMs, redone } = undoRedo(doc, [remove])
+    const { result, undone, undoWork, redone } = undoRedo(doc, [remove])
     expect(result.inverse.map((o) => o.type)).toEqual(["createRegions"])
-    expect(undoMs).toBeLessThan(2000)
+    expect(undoWork).toBeLessThan(QUICK)
     expect(stable(undone.doc)).toEqual(stable(doc))
     expect(stable(redone.doc)).toEqual(stable(result.doc))
   }, 60_000)
@@ -104,9 +109,9 @@ describe("undoing a large subtree delete is one bounded batch", () => {
     // Every other region belongs to the subtree under m0.
     const doc = manyRegions(20_000, (i) => (i % 2 === 0 && i > 0 ? i - 2 : undefined))
     const remove = op({ type: "deleteRegion", regionId: "m0", children: "delete" })
-    const { result, undone, undoMs } = undoRedo(doc, [remove])
+    const { result, undone, undoWork } = undoRedo(doc, [remove])
     expect(result.doc.sources["s1"]?.regionOrder).toHaveLength(10_000)
-    expect(undoMs).toBeLessThan(2000)
+    expect(undoWork).toBeLessThan(QUICK)
     expect(order(undone.doc)).toEqual(order(doc))
   }, 60_000)
 

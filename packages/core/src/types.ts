@@ -1,6 +1,7 @@
 // Public document types. Normative source: Spec 0001 (document schema).
 // The Valibot schemas in ./schema are annotated with these types, so the compiler
-// rejects any drift between a schema and its interface.
+// rejects a schema whose output does not fit its interface. It does not catch
+// an interface field the schema never checks; test/schema-parity.test.ts does.
 
 /** Opaque identifier, `^[A-Za-z0-9_.:-]{1,64}$`, unique across the whole document. */
 export type ID = string

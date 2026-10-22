@@ -1,9 +1,8 @@
 import { AnnotateError } from "../errors.js"
 import type { Limits } from "../limits.js"
 import type { AnnotationDocument } from "../types.js"
+import type { Charge } from "./charge.js"
 import { type Size, ZERO, knownSize, measure, minus, plus, rememberSize } from "./doc-size.js"
-
-type Charge = (units: number) => void
 
 // Tracks how a batch changes the document's size (Limits.maxDocumentNodes and
 // maxDocumentBytes) without re-walking the document: the draft reports every

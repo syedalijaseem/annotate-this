@@ -1,6 +1,6 @@
 import { safeParse } from "valibot"
 import { AnnotateError, type ErrorDetail } from "../errors.js"
-import { ID_PATTERN } from "../ids.js"
+import { isValidId } from "../ids.js"
 import { type Limits, resolveLimits } from "../limits.js"
 import { TimestampSchema } from "../schema/primitives.js"
 import { clip } from "../validate/issues.js"
@@ -19,18 +19,19 @@ import {
 import { createRegions, deleteRegions } from "./bulk-ops.js"
 import { setConfig } from "./config-ops.js"
 import { setDocumentMeta } from "./document-ops.js"
-import { type Charge, Draft } from "./draft.js"
+import type { Charge } from "./charge.js"
+import { Draft } from "./draft.js"
 import { parseOperation } from "./op-schema.js"
 import { createRegion, patchRegion, reorderRegion, setGeometry } from "./region-ops.js"
 import { deleteRegion, moveRegionToSource } from "./region-tree.js"
 import { addSkeleton, removeSkeleton, updateSkeleton } from "./skeleton-ops.js"
 import { addSource, removeSource, reorderSource, updateSource } from "./source-ops.js"
 import { payloadBudget, snapshot } from "./snapshot.js"
-import type { ApplyOptions, ApplyResult, Batch, Operation, OperationType } from "./types.js"
+import type { ApplyBatchOptions, ApplyResult, Batch, Operation, OperationType } from "./types.js"
 import { deriveId } from "./util.js"
 import type { AnnotationDocument, ID } from "../types.js"
 
-const ORIGINS: ReadonlySet<unknown> = new Set(["local", "remote", "system"])
+const ORIGINS: ReadonlySet<unknown> = /* @__PURE__ */ new Set(["local", "remote", "system"])
 
 const HANDLERS: {
   [K in OperationType]: (ctx: OpContext, op: Extract<Operation, { type: K }>) => InverseOp[]
@@ -75,18 +76,30 @@ interface BatchView {
 }
 
 // Reads each batch field exactly once; exotic input (getters, proxies) becomes a typed error.
-function readBatch(batch: Batch, maxOps: number): BatchView {
+// `actor` and `label` are optional, bounded text.
+function assertOptionalText(field: string, value: unknown, max: number): void {
+  if (value === undefined) return
+  if (typeof value !== "string") fail("INVALID_DOCUMENT", `batch: ${field} must be a string`)
+  if ((value as string).length > max) {
+    fail("LIMIT_EXCEEDED", `batch: ${field} is longer than ${max} characters`)
+  }
+}
+
+function readBatch(batch: Batch, limits: Limits): BatchView {
+  const maxOps = limits.maxBatchOps
   try {
     if (typeof batch !== "object" || batch === null)
       fail("INVALID_DOCUMENT", "batch: expected an object")
-    const { id, origin, at, ops } = batch as unknown as Record<string, unknown>
-    if (typeof id !== "string" || !ID_PATTERN.test(id)) {
+    const { id, origin, at, ops, actor, label } = batch as unknown as Record<string, unknown>
+    if (!isValidId(id)) {
       fail("INVALID_DOCUMENT", "batch: id must be a valid id")
     }
     if (!ORIGINS.has(origin)) fail("INVALID_DOCUMENT", "batch: unknown origin")
     if (!safeParse(TimestampSchema, at).success) {
-      fail("INVALID_DOCUMENT", "batch: at must be an ISO-8601 timestamp")
+      fail("INVALID_DOCUMENT", "batch: at must be an ISO-8601 UTC timestamp")
     }
+    assertOptionalText("actor", actor, limits.maxStringLength)
+    assertOptionalText("label", label, limits.maxStringLength)
     if (!Array.isArray(ops)) fail("INVALID_DOCUMENT", "batch: ops must be an array")
     const length = (ops as unknown[]).length
     if (length === 0) fail("INVALID_DOCUMENT", "batch: needs at least one operation")
@@ -98,17 +111,28 @@ function readBatch(batch: Batch, maxOps: number): BatchView {
   }
 }
 
-function workMeter(max: number): Charge {
+interface WorkMeter {
+  charge: Charge
+  spent: () => number
+}
+
+function workMeter(max: number): WorkMeter {
   let spent = 0
-  return (units) => {
+  const charge: Charge = (units) => {
     spent += units
     if (spent > max) fail("LIMIT_EXCEEDED", `batch: needs more than ${max} units of work`)
   }
+  return { charge, spent: () => spent }
 }
+
+// Fixed cost of any operation (copy, schema parse, dispatch, bookkeeping):
+// about 10 µs, measured on small createRegion, patchRegion and updateTag ops.
+const OPERATION_COST = 250
 
 // One private, parsed copy of an untrusted operation: nothing is read from
 // `raw` afterwards. The copy is charged while it is taken, by what parsing will cost.
 function prepare(ctx: OpContext, raw: unknown): Operation {
+  ctx.charge(OPERATION_COST)
   return parseOperation(snapshot(raw, payloadBudget(ctx.limits), ctx.charge))
 }
 
@@ -181,7 +205,7 @@ function idFor(inverseId: InverseId, opId: ID, index: number): ID {
   } catch {
     fail("INVALID_DOCUMENT", "inverseId failed")
   }
-  if (typeof derived !== "string" || !ID_PATTERN.test(derived)) {
+  if (!isValidId(derived)) {
     fail("INVALID_DOCUMENT", "inverseId must return a valid id")
   }
   return derived as ID
@@ -199,8 +223,13 @@ function inverseOf(applied: readonly Applied[], inverseId: InverseId) {
   return inverse
 }
 
-function contextFor(doc: AnnotationDocument, at: string, limits: Limits, options: ApplyOptions) {
-  const charge = workMeter(limits.maxBatchWork)
+function contextFor(
+  doc: AnnotationDocument,
+  at: string,
+  limits: Limits,
+  options: ApplyBatchOptions,
+  charge: Charge,
+) {
   const draft = new Draft(doc, charge, limits)
   const ctx: OpContext = { draft, at, limits, ignoreRev: options.ignoreRev === true, charge }
   return ctx
@@ -216,8 +245,13 @@ function contextFor(doc: AnnotationDocument, at: string, limits: Limits, options
  * document, no changes and no inverse. Idempotency windows and undo stacks
  * belong to the store.
  *
+ * `doc` must come from parseDocument, parseDocumentJson, createDocument or an
+ * earlier `apply`: apply does not re-validate the document it is given, only
+ * what the batch changes.
+ *
  * Documents are treated as immutable values: neither `doc` nor any document
- * `apply` returns may be mutated afterwards. Results share structure with
+ * `apply` returns may be mutated afterwards, and neither may the returned
+ * inverse operations, which can share nested objects with the previous document. Results share structure with
  * their input, and `apply` remembers each result's size so the next batch can
  * check the document limits without walking it again; mutating a document
  * would make those checks wrong. Copy a document (for example with
@@ -226,13 +260,26 @@ function contextFor(doc: AnnotationDocument, at: string, limits: Limits, options
 export function apply(
   doc: AnnotationDocument,
   batch: Batch,
-  options: ApplyOptions = {},
+  options: ApplyBatchOptions = {},
 ): ApplyResult {
+  return applyMetered(doc, batch, options).result
+}
+
+// `apply`, plus the work units (Limits.maxBatchWork) the batch spent. Not part
+// of the public entry: tests use it to assert costs deterministically.
+export function applyMetered(
+  doc: AnnotationDocument,
+  batch: Batch,
+  options: ApplyBatchOptions = {},
+): { result: ApplyResult; work: number } {
   const limits = resolveLimits(options.limits)
-  const view = readBatch(batch, limits.maxBatchOps)
-  const ctx = contextFor(doc, view.at, limits, options)
+  const view = readBatch(batch, limits)
+  const meter = workMeter(limits.maxBatchWork)
+  const ctx = contextFor(doc, view.at, limits, options, meter.charge)
   const applied = applyAll(ctx, view)
   const { doc: next, changes } = ctx.draft.finish()
-  if (next === doc) return { doc, changes, inverse: [] }
-  return { doc: next, changes, inverse: inverseOf(applied, options.inverseId ?? deriveId) }
+  const work = meter.spent()
+  if (next === doc) return { result: { doc, changes, inverse: [] }, work }
+  const inverse = inverseOf(applied, options.inverseId ?? deriveId)
+  return { result: { doc: next, changes, inverse }, work }
 }

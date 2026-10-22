@@ -56,4 +56,39 @@ describe("AnnotateError", () => {
     expect(isAnnotateError({ name: "AnnotateError", code: "CYCLE", message: "x" })).toBe(true)
     expect(isAnnotateError(null)).toBe(false)
   })
+
+  it("returns false instead of throwing for hostile objects", () => {
+    const throwing = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("boom")
+        },
+        getPrototypeOf() {
+          throw new Error("boom")
+        },
+      },
+    )
+    expect(isAnnotateError(throwing)).toBe(false)
+    const getter = Object.defineProperty({}, "name", {
+      get() {
+        throw new Error("boom")
+      },
+    })
+    expect(isAnnotateError(getter)).toBe(false)
+  })
+
+  it("rejects spoofed shapes with malformed detail", () => {
+    const base = { name: "AnnotateError", code: "CYCLE", message: "x" }
+    expect(isAnnotateError({ ...base, issues: "not-an-array" })).toBe(false)
+    expect(isAnnotateError({ ...base, issues: [{ path: 1, message: "m" }] })).toBe(false)
+    expect(isAnnotateError({ ...base, issues: [null] })).toBe(false)
+    expect(isAnnotateError({ ...base, opIndex: "2" })).toBe(false)
+    expect(isAnnotateError({ ...base, opId: 7 })).toBe(false)
+    expect(isAnnotateError({ ...base, code: "NOPE" })).toBe(false)
+    expect(
+      isAnnotateError({ ...base, issues: [{ path: "a", message: "b" }], opIndex: 0, opId: "o" }),
+    ).toBe(true)
+    expect(isAnnotateError({ ...base, opIndex: undefined })).toBe(true)
+  })
 })

@@ -7,7 +7,7 @@ import { attributeIssues } from "../validate/labels.js"
 import { metaDepthIssues, sourceStrings, textLimit } from "../validate/limit-checks.js"
 import { sourceRefIssues } from "../validate/references.js"
 import { videoSourceIssues } from "../validate/video.js"
-import { REGION_LEVEL, assertDepth, parseWith } from "./check.js"
+import { LEVELS, assertDepth, parseWith } from "./check.js"
 import { type InverseOp, type OpContext, checkBaseRev } from "./context.js"
 import {
   assertNone,
@@ -28,10 +28,6 @@ import type {
   UpdateSourceOp,
 } from "./types.js"
 import { assertAreaHolds } from "./uses.js"
-
-// Document levels: doc > sources > source (like a region) > allowedArea / scale.
-const SOURCE_LEVEL = REGION_LEVEL
-const SOURCE_FIELD_LEVEL = SOURCE_LEVEL + 1
 
 // The parseDocument rules for one source as it would be stored. Frame timing
 // is only checked when the source is new: updateSource cannot change it.
@@ -58,7 +54,7 @@ function sourceIssues(ctx: OpContext, source: Source, isNew: boolean): Issue[] {
 export function addSource(ctx: OpContext, op: AddSourceOp): InverseOp[] {
   const { draft, limits } = ctx
   const payload = op.source as unknown as Record<string, unknown>
-  assertDepth(payload, limits, SOURCE_LEVEL, "source")
+  assertDepth(payload, limits, LEVELS.source, "source")
   const parsed = parseWith(SourceSchema, { ...payload, rev: payload["rev"] ?? 0 }, "source")
   const source = continuedRev(draft, parsed)
   assertUsableId(ctx, source.id)
@@ -84,7 +80,7 @@ export function updateSource(ctx: OpContext, op: UpdateSourceOp): InverseOp[] {
   checkBaseRev(ctx, op, source.rev)
   for (const field of ["allowedArea", "scale"] as const) {
     const value = op.patch[field]
-    if (value) assertDepth(value, limits, SOURCE_FIELD_LEVEL, `source.${field}`)
+    if (value) assertDepth(value, limits, LEVELS.sourceField, `source.${field}`)
   }
   const result = applyPatch(ctx, source, op.patch)
   if (!result) return []

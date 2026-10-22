@@ -1,10 +1,20 @@
+import { AnnotateError } from "./errors.js"
 import type { ID } from "./types.js"
 
-/** Allowed identifier shape (Spec 0001): safe to embed in URLs, attributes and file names. */
-export const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,64}$/
+const idError = (message: string): AnnotateError => new AnnotateError("INVALID_DOCUMENT", message)
+
+/**
+ * Allowed identifier shape (Spec 0001), as regular-expression source: safe to
+ * embed in URLs, attributes and file names. A string, so no caller can alter
+ * the expression validation uses; build a RegExp from it if you need one.
+ */
+export const ID_PATTERN_SOURCE = "^[A-Za-z0-9_.:-]{1,64}$"
+
+// Private: an exported RegExp could be recompiled or have its lastIndex moved.
+const ID_REGEX = /* @__PURE__ */ new RegExp(ID_PATTERN_SOURCE)
 
 export function isValidId(value: unknown): value is ID {
-  return typeof value === "string" && ID_PATTERN.test(value)
+  return typeof value === "string" && ID_REGEX.test(value)
 }
 
 export interface IdGeneratorOptions {
@@ -22,14 +32,14 @@ function secureRandomBytes(bytes: Uint8Array): Uint8Array {
   // Read the global lazily: nothing may touch the environment at import time (SSR-safe).
   const crypto = (globalThis as { crypto?: CryptoLike }).crypto
   if (!crypto || typeof crypto.getRandomValues !== "function") {
-    throw new Error(
+    throw idError(
       "A secure random source (globalThis.crypto.getRandomValues) is required to generate IDs",
     )
   }
   return crypto.getRandomValues(bytes)
 }
 
-const MAX_TIMESTAMP = 2 ** 48
+const MAX_TIMESTAMP = 281_474_976_710_656 // 2 ** 48, as a literal so bundlers can drop it
 const COUNTER_MAX = 0xfff
 const COUNTER_START_MAX = 0x3ff
 
@@ -52,11 +62,10 @@ export function createIdGenerator(options: IdGeneratorOptions = {}): () => ID {
 
   return () => {
     const random = randomBytes(new Uint8Array(10))
-    if (random.length !== 10)
-      throw new Error("The random source returned the wrong number of bytes")
+    if (random.length !== 10) throw idError("The random source returned the wrong number of bytes")
     const current = now()
     if (!Number.isSafeInteger(current) || current < 0 || current >= MAX_TIMESTAMP) {
-      throw new Error("The clock must return whole milliseconds that fit in 48 bits")
+      throw idError("The clock must return whole milliseconds that fit in 48 bits")
     }
     if (current > lastTimestamp) {
       lastTimestamp = current
@@ -65,7 +74,7 @@ export function createIdGenerator(options: IdGeneratorOptions = {}): () => ID {
       counter += 1
       if (counter > COUNTER_MAX) {
         if (lastTimestamp + 1 >= MAX_TIMESTAMP) {
-          throw new Error("The ID generator ran out of timestamps in the 48-bit range")
+          throw idError("The ID generator ran out of timestamps in the 48-bit range")
         }
         lastTimestamp += 1
         counter = 0

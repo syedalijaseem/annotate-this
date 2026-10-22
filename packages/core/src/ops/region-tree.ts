@@ -15,9 +15,9 @@ import {
 import type { ChildPolicy, DeleteRegionOp, MoveRegionToSourceOp } from "./types.js"
 import { without } from "./util.js"
 
-// Work units per parent-chain step: a lookup in a large record, about 0.25 µs
-// standalone and up to twice that under load.
-const CHAIN_STEP_COST = 16
+// Work units per parent-chain step: a lookup in the regions record, about
+// 70 ns in a 20,000-region document and 270 ns in a 50,000-region one (cache misses).
+const CHAIN_STEP_COST = 8
 
 // Walks the parent chain from `parentId` (one `parentOf` lookup per step);
 // reaching `id` means the new link would close a loop. An acyclic chain has

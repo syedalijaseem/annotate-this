@@ -3,14 +3,7 @@ import { AnnotateError } from "../errors.js"
 import { clip } from "../validate/issues.js"
 import { GeometrySchema } from "../schema/geometry.js"
 import type { Region } from "../types.js"
-import {
-  GEOMETRY_LEVEL,
-  REGION_LEVEL,
-  assertDepth,
-  assertRegionRules,
-  parseRegion,
-  validateRegion,
-} from "./check.js"
+import { LEVELS, assertDepth, assertRegionRules, parseRegion, validateRegion } from "./check.js"
 import { type InverseOp, type OpContext, checkBaseRev } from "./context.js"
 import {
   assertUsableId,
@@ -37,20 +30,24 @@ import { deepEqual } from "./util.js"
 export function assertRoom(ctx: OpContext, count: number): void {
   const { draft, limits } = ctx
   // The regions record is one object, so it is also bound by maxEntries.
-  if (
-    draft.annotationCount + count > limits.maxAnnotations ||
-    draft.regionCount + count > limits.maxEntries
-  ) {
+  if (draft.annotationCount + count > limits.maxAnnotations) {
     throw new AnnotateError("LIMIT_EXCEEDED", `More than ${limits.maxAnnotations} annotations`)
+  }
+  if (draft.regionCount + count > limits.maxEntries) {
+    throw new AnnotateError("LIMIT_EXCEEDED", `regions: more than ${limits.maxEntries} entries`)
   }
 }
 
 // A new region's payload as it will be stored: rev defaults to 0 (continued
 // past a delete earlier in the batch). createRegion stamps updatedAt with the
 // batch time; createRegions (`stamp` false) keeps provenance exactly as given.
+// Parsing and storing one new region (schema, defaults, entity checks): about 8 µs.
+const NEW_REGION_COST = 200
+
 export function parseNewRegion(ctx: OpContext, input: unknown, stamp = true): Region {
+  ctx.charge(NEW_REGION_COST)
   const payload = input as Record<string, unknown>
-  assertDepth(payload, ctx.limits, REGION_LEVEL, "region")
+  assertDepth(payload, ctx.limits, LEVELS.region, "region")
   const provenance = payload["provenance"]
   const parsed = parseRegion({
     ...payload,
@@ -76,7 +73,7 @@ export function createRegion(ctx: OpContext, op: CreateRegionOp): InverseOp[] {
 export function setGeometry(ctx: OpContext, op: SetGeometryOp): InverseOp[] {
   const region = needRegion(ctx, op.regionId)
   checkBaseRev(ctx, op, region.rev)
-  assertDepth(op.geometry, ctx.limits, GEOMETRY_LEVEL, "geometry")
+  assertDepth(op.geometry, ctx.limits, LEVELS.geometry, "geometry")
   const parsed = safeParse(GeometrySchema, op.geometry, { abortEarly: true })
   if (!parsed.success) {
     throw new AnnotateError(

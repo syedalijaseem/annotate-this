@@ -10,16 +10,16 @@ import type { SourcePatch } from "./types.js"
 // Entities that can reference config entries (classes, tags, attribute keys).
 export type Holder = Region | Track | Source
 
-export interface Uses {
+interface Uses {
   regions: Region[]
   tracks: Track[]
   sources: Source[]
 }
 
-// Work units (about 40 ns each, see Limits.maxBatchWork) per entity a
+// Work units (see Limits.maxBatchWork) per entity a
 // whole-document scan visits: measured at about 0.4 µs per region on a
 // 50,000-region document, charged with a 3x margin for the predicates.
-export const SCAN_COST = 32
+export const SCAN_COST = 16
 
 // Every region, track and (unless `withSources` is false) source that `test`
 // accepts. These are the whole-document scans config changes need; each is
