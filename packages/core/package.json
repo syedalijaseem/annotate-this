@@ -48,11 +48,15 @@
     {
       "path": "dist/index.js",
       "limit": "25 kB",
-      "gzip": true
+      "gzip": true,
+      "ignore": [
+        "valibot"
+      ]
     }
   ],
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
+    "@size-limit/esbuild": "^14.2.0",
     "@size-limit/file": "^14.2.0",
     "@valibot/to-json-schema": "^1.8.0",
     "@vitest/coverage-v8": "5.0.5",

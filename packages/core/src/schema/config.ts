@@ -11,7 +11,7 @@ import {
   string,
   strictTuple,
 } from "valibot"
-import type { Config } from "../types.js"
+import type { AttributeDef, ClassDef, Config, GeometryType, Skeleton, TagDef } from "../types.js"
 import { BoxSchema, GeometryTypeSchema } from "./geometry.js"
 import {
   MAX_LIST_LENGTH,
@@ -27,43 +27,62 @@ import {
   safeRecord,
 } from "./primitives.js"
 
-const ClassDefSchema = looseObject({
+/** Shared by the document schema and the operation patches, so both accept the same values. */
+export const AllowedGeometrySchema: GenericSchema<unknown, GeometryType[]> = pipe(
+  array(GeometryTypeSchema),
+  maxLength(MAX_LIST_LENGTH),
+)
+export const ShortListSchema: GenericSchema<unknown, string[]> = pipe(
+  array(TextSchema),
+  maxLength(MAX_LIST_LENGTH),
+)
+export const StatusesSchema: GenericSchema<unknown, string[]> = pipe(
+  array(TextSchema),
+  minLength(1),
+  maxLength(MAX_LIST_LENGTH),
+)
+export const SkeletonPointsSchema: GenericSchema<unknown, Skeleton["points"]> = pipe(
+  array(looseObject({ name: TextSchema, color: exactOptional(ColorSchema) })),
+  minLength(1),
+)
+export const EdgesSchema: GenericSchema<unknown, Skeleton["edges"]> = array(
+  strictTuple([IntSchema, IntSchema]),
+)
+
+export const ClassDefSchema: GenericSchema<unknown, ClassDef> = looseObject({
   id: IdSchema,
   name: TextSchema,
   color: exactOptional(ColorSchema),
   parentId: exactOptional(IdSchema),
-  allowedGeometry: exactOptional(pipe(array(GeometryTypeSchema), maxLength(MAX_LIST_LENGTH))),
+  allowedGeometry: exactOptional(AllowedGeometrySchema),
   attributeKeys: exactOptional(array(IdSchema)),
   hotkey: exactOptional(TextSchema),
   meta: MetaSchema,
 })
 
-const TagDefSchema = looseObject({
+export const TagDefSchema: GenericSchema<unknown, TagDef> = looseObject({
   id: IdSchema,
   name: TextSchema,
   color: exactOptional(ColorSchema),
   meta: MetaSchema,
 })
 
-const AttributeDefSchema = looseObject({
+export const AttributeDefSchema: GenericSchema<unknown, AttributeDef> = looseObject({
   key: IdSchema,
   label: TextSchema,
   required: exactOptional(boolean()),
   type: picklist(["string", "number", "boolean", "enum"] as const),
-  options: exactOptional(pipe(array(TextSchema), maxLength(MAX_LIST_LENGTH))),
+  options: exactOptional(ShortListSchema),
   min: exactOptional(NumSchema),
   max: exactOptional(NumSchema),
   default: exactOptional(AttributeValueSchema),
 })
 
-const SkeletonSchema = looseObject({
+export const SkeletonSchema: GenericSchema<unknown, Skeleton> = looseObject({
   id: IdSchema,
   name: TextSchema,
-  points: pipe(
-    array(looseObject({ name: TextSchema, color: exactOptional(ColorSchema) })),
-    minLength(1),
-  ),
-  edges: array(strictTuple([IntSchema, IntSchema])),
+  points: SkeletonPointsSchema,
+  edges: EdgesSchema,
 })
 
 export const ConfigSchema: GenericSchema<unknown, Config> = looseObject({
@@ -75,10 +94,10 @@ export const ConfigSchema: GenericSchema<unknown, Config> = looseObject({
   tagOrder: array(IdSchema),
   attributes: safeRecord(AttributeDefSchema),
   skeletons: safeRecord(SkeletonSchema),
-  tools: exactOptional(pipe(array(TextSchema), maxLength(MAX_LIST_LENGTH))),
+  tools: exactOptional(ShortListSchema),
   allowedArea: exactOptional(BoxSchema),
   minRegionSize: exactOptional(NonNegativeSchema),
-  statuses: exactOptional(pipe(array(TextSchema), minLength(1), maxLength(MAX_LIST_LENGTH))),
+  statuses: exactOptional(StatusesSchema),
   meta: MetaSchema,
 })
 

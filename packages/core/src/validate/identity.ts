@@ -51,6 +51,29 @@ function uniqueIds(doc: AnnotationDocument): Issue[] {
   return issues
 }
 
+/** Change sets name the config "config" (Spec 0002), so no entity or document may use that id. */
+export const RESERVED_ID = "config"
+
+function reservedIds(doc: AnnotationDocument): Issue[] {
+  const records: [string, Keyed][] = [
+    ["sources", doc.sources],
+    ["regions", doc.regions],
+    ["tracks", doc.tracks],
+    ["config.classes", doc.config.classes],
+    ["config.tags", doc.config.tags],
+    ["config.skeletons", doc.config.skeletons],
+  ]
+  const issues = records
+    .filter(([, record]) => Object.hasOwn(record, RESERVED_ID))
+    .map(([kind]) =>
+      issue("INVALID_DOCUMENT", `${kind}.${RESERVED_ID}`, `Id "${RESERVED_ID}" is reserved`),
+    )
+  if (doc.id === RESERVED_ID) {
+    issues.push(issue("INVALID_DOCUMENT", "id", `Id "${RESERVED_ID}" is reserved`))
+  }
+  return issues
+}
+
 /** `order` must list each id of `expected` exactly once and nothing else. */
 export function permutationIssues(
   path: string,
@@ -125,6 +148,7 @@ export function checkIdentity(doc: AnnotationDocument): Issue[] {
     ...keyMatchesId("config.classes", doc.config.classes),
     ...keyMatchesId("config.tags", doc.config.tags),
     ...keyMatchesId("config.skeletons", doc.config.skeletons),
+    ...reservedIds(doc),
     ...uniqueIds(doc),
   ]
 }

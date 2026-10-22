@@ -1,4 +1,4 @@
-import { safeParse } from "valibot"
+import { type GenericSchema, safeParse } from "valibot"
 import { AnnotateError } from "../errors.js"
 import type { Limits } from "../limits.js"
 import { RegionSchema } from "../schema/annotation.js"
@@ -28,15 +28,17 @@ export function assertDepth(value: unknown, limits: Limits, level: number, what:
   }
 }
 
-// Parses a region shape; `validateRegion` returns the parsed region, which is what gets stored.
-export function parseRegion(input: unknown): Region {
-  const parsed = safeParse(RegionSchema, input, { abortEarly: true })
+// Parses an entity payload with its document schema; the parsed copy is what gets stored.
+export function parseWith<T>(schema: GenericSchema<unknown, T>, input: unknown, what: string): T {
+  const parsed = safeParse(schema, input, { abortEarly: true })
   if (!parsed.success) {
-    const message = clip(parsed.issues[0]?.message ?? "Invalid region")
-    throw new AnnotateError("INVALID_DOCUMENT", `region: ${message}`)
+    const message = clip(parsed.issues[0]?.message ?? "Invalid value")
+    throw new AnnotateError("INVALID_DOCUMENT", `${what}: ${message}`)
   }
   return parsed.output
 }
+
+export const parseRegion = (input: unknown): Region => parseWith(RegionSchema, input, "region")
 
 // Work units for re-validating a region: its vertices plus the values that get walked.
 function regionCost(region: Region): number {

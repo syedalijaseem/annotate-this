@@ -120,3 +120,55 @@ export function snapshot(value: unknown, budget: InputBudget): Snapshot {
   walker.run()
   return { value: copied, cost: walker.cost }
 }
+
+// Work units per entry of a free-form record (meta, attributes, custom
+// geometry data and anything nested in them). The schemas parse such an entry
+// in about 2 µs, against roughly 0.15 µs per unit for the rest of an
+// operation, so charging only the copy would let one batch run for minutes.
+export const RECORD_ENTRY_COST = 16
+
+const objectAt = (value: unknown, key: string): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const child = (value as Record<string, unknown>)[key]
+  return typeof child === "object" && child !== null
+    ? (child as Record<string, unknown>)
+    : undefined
+}
+
+// The free-form values of an entity or patch payload.
+const recordsOf = (entity: unknown): unknown[] => [
+  objectAt(entity, "meta"),
+  objectAt(entity, "attributes"),
+  objectAt(objectAt(entity, "geometry"), "data"),
+]
+
+// Keys of every object inside `roots`. Iterative; the input is an acyclic snapshot.
+function countKeys(roots: unknown[]): number {
+  let keys = 0
+  const stack = roots.filter((root) => typeof root === "object" && root !== null) as object[]
+  for (let current = stack.pop(); current !== undefined; current = stack.pop()) {
+    const children: unknown[] = Array.isArray(current) ? current : Object.values(current)
+    if (!Array.isArray(current)) keys += children.length
+    for (const child of children) {
+      if (typeof child === "object" && child !== null) stack.push(child)
+    }
+  }
+  return keys
+}
+
+// Free-form record entries in an operation snapshot, before its schemas run.
+export function recordEntries(op: unknown): number {
+  if (typeof op !== "object" || op === null) return 0
+  const fields = op as Record<string, unknown>
+  if (fields["type"] === "setDocumentMeta") return countKeys([fields["patch"]])
+  const roots = [
+    ...recordsOf(fields["region"]),
+    ...recordsOf(fields["source"]),
+    ...recordsOf(fields["def"]),
+    ...recordsOf(fields["patch"]),
+    objectAt(fields["geometry"], "data"),
+  ]
+  const regions = fields["regions"]
+  if (Array.isArray(regions)) for (const region of regions) roots.push(...recordsOf(region))
+  return countKeys(roots)
+}

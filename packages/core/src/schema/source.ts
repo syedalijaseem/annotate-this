@@ -10,7 +10,7 @@ import {
   pipe,
   variant,
 } from "valibot"
-import type { Source } from "../types.js"
+import type { Source, SourceScale } from "../types.js"
 import { BoxSchema } from "./geometry.js"
 import {
   AttributesSchema,
@@ -25,7 +25,7 @@ import {
 
 const sizeSchema = looseObject({ w: NonNegativeSchema, h: NonNegativeSchema })
 
-const ScaleSchema = looseObject({
+export const ScaleSchema: GenericSchema<unknown, SourceScale> = looseObject({
   pixelSize: exactOptional(sizeSchema),
   realSize: exactOptional(
     looseObject({ w: NonNegativeSchema, h: NonNegativeSchema, unit: TextSchema }),

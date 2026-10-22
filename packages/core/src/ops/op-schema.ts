@@ -20,13 +20,28 @@ import {
 } from "valibot"
 import { AnnotateError } from "../errors.js"
 import {
+  AllowedGeometrySchema,
+  AttributeDefSchema,
+  ClassDefSchema,
+  EdgesSchema,
+  ShortListSchema,
+  SkeletonPointsSchema,
+  SkeletonSchema,
+  StatusesSchema,
+  TagDefSchema,
+} from "../schema/config.js"
+import { BoxSchema } from "../schema/geometry.js"
+import {
   AttributeValueSchema,
+  ColorSchema,
   IdSchema,
   IntSchema,
   MetaSchema,
+  NonNegativeSchema,
   TextSchema,
   safeRecord,
 } from "../schema/primitives.js"
+import { ScaleSchema } from "../schema/source.js"
 import { clip } from "../validate/issues.js"
 import type { Operation } from "./types.js"
 
@@ -40,63 +55,117 @@ const PositionSchema = union([
 
 const clearable = <T>(schema: GenericSchema<unknown, T>) => exactOptional(nullable(schema))
 
-// Spec 0002: the patchable region fields. Anything else is rejected, not ignored.
-const RegionPatchSchema = pipe(
-  unknown(),
-  notArray,
-  strictObject({
-    classId: clearable(IdSchema),
-    tagIds: exactOptional(array(IdSchema)),
-    attributes: exactOptional(safeRecord(nullable(AttributeValueSchema))),
-    comment: clearable(TextSchema),
-    status: exactOptional(pipe(string(), minLength(1))),
-    locked: clearable(boolean()),
-    hidden: clearable(boolean()),
-    parentId: clearable(IdSchema),
-    frame: clearable(IntSchema),
-    meta: exactOptional(MetaSchema),
-  }),
-)
+const patchOf = (entries: Parameters<typeof strictObject>[0]) =>
+  pipe(unknown(), notArray, strictObject(entries))
+
+const AttributesPatchSchema = exactOptional(safeRecord(nullable(AttributeValueSchema)))
+
+// Spec 0002: the patchable fields of each entity. Anything else is rejected, not ignored.
+const RegionPatchSchema = patchOf({
+  classId: clearable(IdSchema),
+  tagIds: exactOptional(array(IdSchema)),
+  attributes: AttributesPatchSchema,
+  comment: clearable(TextSchema),
+  status: exactOptional(pipe(string(), minLength(1))),
+  locked: clearable(boolean()),
+  hidden: clearable(boolean()),
+  parentId: clearable(IdSchema),
+  frame: clearable(IntSchema),
+  meta: exactOptional(MetaSchema),
+})
+
+const ConfigPatchSchema = patchOf({
+  taskDescription: clearable(string()),
+  tools: clearable(ShortListSchema),
+  allowedArea: clearable(BoxSchema),
+  minRegionSize: clearable(NonNegativeSchema),
+  statuses: clearable(StatusesSchema),
+  meta: exactOptional(MetaSchema),
+})
+
+// Fields classes and tags share.
+const labelPatch = {
+  name: exactOptional(TextSchema),
+  color: clearable(ColorSchema),
+  meta: exactOptional(MetaSchema),
+}
+
+const TagPatchSchema = patchOf(labelPatch)
+
+const ClassPatchSchema = patchOf({
+  ...labelPatch,
+  parentId: clearable(IdSchema),
+  allowedGeometry: clearable(AllowedGeometrySchema),
+  attributeKeys: clearable(array(IdSchema)),
+  hotkey: clearable(TextSchema),
+})
+
+const SkeletonPatchSchema = patchOf({
+  name: exactOptional(TextSchema),
+  points: exactOptional(SkeletonPointsSchema),
+  edges: exactOptional(EdgesSchema),
+})
+
+const SourcePatchSchema = patchOf({
+  name: exactOptional(TextSchema),
+  uri: exactOptional(TextSchema),
+  thumbnailUri: clearable(TextSchema),
+  classId: clearable(IdSchema),
+  tagIds: exactOptional(array(IdSchema)),
+  attributes: AttributesPatchSchema,
+  comment: clearable(TextSchema),
+  allowedArea: clearable(BoxSchema),
+  scale: clearable(ScaleSchema),
+  meta: exactOptional(MetaSchema),
+})
+
+const OnInUseSchema = picklist(["reject", "detach"] as const)
+const ChildrenSchema = picklist(["delete", "detach"] as const)
+
+// An entity payload: any plain object here; the handler parses it with the document schema.
+const EntitySchema = pipe(unknown(), notArray, looseObject({}))
 
 const base = { id: IdSchema, baseRev: exactOptional(IntSchema) }
 
-// Shapes of operation payloads. Entity payloads (`region`, `geometry`) are only
-// required here: their handlers parse them with the document schemas, so the
-// error codes match whole-document validation.
+const op = <T extends string, E extends Parameters<typeof strictObject>[0]>(type: T, entries: E) =>
+  strictObject({ ...base, type: literal(type), ...entries })
+
+const position = exactOptional(PositionSchema)
+
+// Shapes of operation payloads. Region and source payloads are only required
+// here: their handlers parse them with the document schemas (after applying
+// defaults such as rev 0), so the error codes match whole-document validation.
 const OperationSchema = variant("type", [
-  strictObject({ ...base, type: literal("setDocumentMeta"), patch: MetaSchema }),
-  strictObject({
-    ...base,
-    type: literal("createRegion"),
-    region: pipe(unknown(), notArray, looseObject({})),
-    position: exactOptional(PositionSchema),
+  op("setDocumentMeta", { patch: MetaSchema }),
+  op("createRegion", { region: EntitySchema, position }),
+  op("createRegions", {
+    regions: pipe(array(EntitySchema), minLength(1)),
+    positions: exactOptional(array(PositionSchema)),
   }),
-  strictObject({ ...base, type: literal("setGeometry"), regionId: IdSchema, geometry: unknown() }),
-  strictObject({
-    ...base,
-    type: literal("patchRegion"),
-    regionId: IdSchema,
-    patch: RegionPatchSchema,
-  }),
-  strictObject({
-    ...base,
-    type: literal("deleteRegion"),
-    regionId: IdSchema,
-    children: picklist(["delete", "detach"] as const),
-  }),
-  strictObject({
-    ...base,
-    type: literal("reorderRegion"),
-    regionId: IdSchema,
-    position: PositionSchema,
-  }),
-  strictObject({
-    ...base,
-    type: literal("moveRegionToSource"),
-    regionId: IdSchema,
-    sourceId: IdSchema,
-    position: exactOptional(PositionSchema),
-  }),
+  op("setGeometry", { regionId: IdSchema, geometry: unknown() }),
+  op("patchRegion", { regionId: IdSchema, patch: RegionPatchSchema }),
+  op("deleteRegion", { regionId: IdSchema, children: ChildrenSchema }),
+  op("deleteRegions", { regionIds: pipe(array(IdSchema), minLength(1)), children: ChildrenSchema }),
+  op("reorderRegion", { regionId: IdSchema, position: PositionSchema }),
+  op("moveRegionToSource", { regionId: IdSchema, sourceId: IdSchema, position }),
+  op("setConfig", { patch: ConfigPatchSchema }),
+  op("addClass", { def: pipe(unknown(), notArray, ClassDefSchema), position }),
+  op("updateClass", { classId: IdSchema, patch: ClassPatchSchema }),
+  op("removeClass", { classId: IdSchema, onInUse: OnInUseSchema }),
+  op("reorderClass", { classId: IdSchema, position: PositionSchema }),
+  op("addTag", { def: pipe(unknown(), notArray, TagDefSchema), position }),
+  op("updateTag", { tagId: IdSchema, patch: TagPatchSchema }),
+  op("removeTag", { tagId: IdSchema, onInUse: OnInUseSchema }),
+  op("reorderTag", { tagId: IdSchema, position: PositionSchema }),
+  op("setAttributeDef", { def: pipe(unknown(), notArray, AttributeDefSchema) }),
+  op("removeAttributeDef", { key: IdSchema, onInUse: OnInUseSchema }),
+  op("addSkeleton", { def: pipe(unknown(), notArray, SkeletonSchema) }),
+  op("updateSkeleton", { skeletonId: IdSchema, patch: SkeletonPatchSchema }),
+  op("removeSkeleton", { skeletonId: IdSchema }),
+  op("addSource", { source: EntitySchema, position }),
+  op("updateSource", { sourceId: IdSchema, patch: SourcePatchSchema }),
+  op("removeSource", { sourceId: IdSchema }),
+  op("reorderSource", { sourceId: IdSchema, position: PositionSchema }),
 ])
 
 const TYPES: ReadonlySet<unknown> = new Set(

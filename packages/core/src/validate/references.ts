@@ -1,5 +1,5 @@
 import { DEFAULT_STATUSES } from "../schema/config.js"
-import type { AnnotationBase, AnnotationDocument } from "../types.js"
+import type { AnnotationBase, AnnotationDocument, ClassDef, Skeleton, Source } from "../types.js"
 import {
   type Issue,
   MAX_ISSUES_PER_CHECK,
@@ -11,7 +11,7 @@ import {
 } from "./issues.js"
 
 /** Detects cycles in a parent graph in linear time (three-colour depth-first walk). */
-function findCycles(parents: ReadonlyMap<string, string>): string[] {
+export function findCycles(parents: ReadonlyMap<string, string>): string[] {
   const state = new Map<string, 1 | 2>() // 1 = on the current chain, 2 = finished
   const cyclic: string[] = []
   for (const start of parents.keys()) {
@@ -31,7 +31,7 @@ function findCycles(parents: ReadonlyMap<string, string>): string[] {
 const statusSets = new WeakMap<readonly string[], ReadonlySet<string>>()
 
 /** Statuses are looked up once per annotation, so build the Set once per list. */
-function statusSet(statuses: readonly string[]): ReadonlySet<string> {
+export function statusSet(statuses: readonly string[]): ReadonlySet<string> {
   let set = statusSets.get(statuses)
   if (!set) {
     set = new Set(statuses)
@@ -91,63 +91,64 @@ export function annotationRefs(
   return issues
 }
 
-function sourceRefs(doc: AnnotationDocument): Issue[] {
-  const issues: Issue[] = []
-  for (const [id, source] of Object.entries(doc.sources)) {
-    if (source.classId !== undefined && !Object.hasOwn(doc.config.classes, source.classId)) {
-      issues.push(
-        issue("INVALID_DOCUMENT", `sources.${id}.classId`, `Unknown class "${source.classId}"`),
-      )
-    }
-    pushAll(issues, tagIssues(doc, `sources.${id}.tagIds`, source.tagIds))
+/** References of one source: its class and tags. */
+export function sourceRefIssues(doc: AnnotationDocument, id: string, source: Source): Issue[] {
+  const issues = tagIssues(doc, `sources.${id}.tagIds`, source.tagIds)
+  if (source.classId !== undefined && !Object.hasOwn(doc.config.classes, source.classId)) {
+    issues.push(
+      issue("INVALID_DOCUMENT", `sources.${id}.classId`, `Unknown class "${source.classId}"`),
+    )
   }
   return issues
+}
+
+function sourceRefs(doc: AnnotationDocument): Issue[] {
+  const issues: Issue[] = []
+  for (const [id, source] of Object.entries(doc.sources))
+    pushAll(issues, sourceRefIssues(doc, id, source))
+  return issues
+}
+
+/** References of one class: its parent (existence only; cycles are a graph check) and attribute keys. */
+export function classRefIssues(doc: AnnotationDocument, id: string, def: ClassDef): Issue[] {
+  const issues: Issue[] = []
+  const at = `config.classes.${id}`
+  if (def.parentId !== undefined && !Object.hasOwn(doc.config.classes, def.parentId))
+    issues.push(issue("INVALID_DOCUMENT", `${at}.parentId`, `Unknown class "${def.parentId}"`))
+  for (const key of def.attributeKeys ?? []) {
+    if (issues.length >= MAX_ISSUES_PER_CHECK) break
+    if (!Object.hasOwn(doc.config.attributes, key))
+      issues.push(issue("INVALID_DOCUMENT", `${at}.attributeKeys`, `Unknown attribute "${key}"`))
+  }
+  return issues
+}
+
+/** Skeleton edges must name existing points. */
+export function skeletonIssues(id: string, skeleton: Skeleton): Issue[] {
+  const count = skeleton.points.length
+  return skeleton.edges.some(([a, b]) => a >= count || b >= count)
+    ? [
+        issue(
+          "INVALID_DOCUMENT",
+          `config.skeletons.${id}.edges`,
+          "Edge refers to a point that does not exist",
+        ),
+      ]
+    : []
 }
 
 function configRefs(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = []
   const parents = new Map<string, string>()
   for (const [id, def] of Object.entries(doc.config.classes)) {
-    if (def.parentId !== undefined) {
-      if (Object.hasOwn(doc.config.classes, def.parentId)) parents.set(id, def.parentId)
-      else
-        issues.push(
-          issue(
-            "INVALID_DOCUMENT",
-            `config.classes.${id}.parentId`,
-            `Unknown class "${def.parentId}"`,
-          ),
-        )
-    }
-    for (const key of def.attributeKeys ?? []) {
-      if (issues.length >= MAX_ISSUES_PER_CHECK) break
-      if (!Object.hasOwn(doc.config.attributes, key)) {
-        issues.push(
-          issue(
-            "INVALID_DOCUMENT",
-            `config.classes.${id}.attributeKeys`,
-            `Unknown attribute "${key}"`,
-          ),
-        )
-      }
-    }
+    pushAll(issues, classRefIssues(doc, id, def))
+    if (def.parentId !== undefined && Object.hasOwn(doc.config.classes, def.parentId))
+      parents.set(id, def.parentId)
   }
   for (const id of findCycles(parents))
     issues.push(issue("CYCLE", `config.classes.${id}.parentId`, "Class hierarchy contains a cycle"))
-  for (const [id, skeleton] of Object.entries(doc.config.skeletons)) {
-    for (const [a, b] of skeleton.edges) {
-      if (issues.length >= MAX_ISSUES_PER_CHECK) break
-      if (a >= skeleton.points.length || b >= skeleton.points.length) {
-        issues.push(
-          issue(
-            "INVALID_DOCUMENT",
-            `config.skeletons.${id}.edges`,
-            "Edge refers to a point that does not exist",
-          ),
-        )
-      }
-    }
-  }
+  for (const [id, skeleton] of Object.entries(doc.config.skeletons))
+    pushAll(issues, skeletonIssues(id, skeleton))
   return issues
 }
 

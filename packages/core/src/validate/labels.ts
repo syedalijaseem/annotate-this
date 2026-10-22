@@ -1,4 +1,10 @@
-import type { AnnotationDocument, AttributeDef, AttributeValue, GeometryType } from "../types.js"
+import type {
+  AnnotationDocument,
+  AttributeDef,
+  AttributeValue,
+  ClassDef,
+  GeometryType,
+} from "../types.js"
 import { type Issue, MAX_ISSUES_PER_CHECK, issue, own, pushAll } from "./issues.js"
 
 const optionSets = new WeakMap<AttributeDef, ReadonlySet<string>>()
@@ -13,7 +19,8 @@ function optionSet(def: AttributeDef): ReadonlySet<string> {
   return set
 }
 
-function attributeProblem(def: AttributeDef, value: AttributeValue): string | null {
+/** Why `value` does not satisfy `def`, or null when it does. */
+export function attributeProblem(def: AttributeDef, value: AttributeValue): string | null {
   switch (def.type) {
     case "string":
       return typeof value === "string" ? null : "expected a string"
@@ -83,7 +90,8 @@ function attributeDefKeys(doc: AnnotationDocument): Issue[] {
     )
 }
 
-function attributeDefProblems(key: string, def: AttributeDef): Issue[] {
+/** Internal consistency of one attribute definition (range, options, default). */
+export function attributeDefProblems(key: string, def: AttributeDef): Issue[] {
   const at = `config.attributes.${key}`
   const issues: Issue[] = []
   if (def.min !== undefined && def.max !== undefined && def.min > def.max)
@@ -97,16 +105,18 @@ function attributeDefProblems(key: string, def: AttributeDef): Issue[] {
   return issues
 }
 
-function duplicateAttributeKeys(doc: AnnotationDocument): Issue[] {
-  return Object.entries(doc.config.classes)
-    .filter(([, c]) => new Set(c.attributeKeys).size !== (c.attributeKeys ?? []).length)
-    .map(([id]) =>
-      issue("INVALID_DOCUMENT", `config.classes.${id}.attributeKeys`, "Attribute listed twice"),
-    )
+/** A class may list each attribute key once. */
+export function duplicateKeyIssue(id: string, def: ClassDef): Issue[] {
+  const keys = def.attributeKeys ?? []
+  return new Set(keys).size === keys.length
+    ? []
+    : [issue("INVALID_DOCUMENT", `config.classes.${id}.attributeKeys`, "Attribute listed twice")]
 }
 
 export function checkLabels(doc: AnnotationDocument): Issue[] {
-  const issues = [...attributeDefKeys(doc), ...duplicateAttributeKeys(doc)]
+  const issues = attributeDefKeys(doc)
+  for (const [id, def] of Object.entries(doc.config.classes))
+    pushAll(issues, duplicateKeyIssue(id, def))
   for (const [key, def] of Object.entries(doc.config.attributes))
     pushAll(issues, attributeDefProblems(key, def))
   for (const [id, source] of Object.entries(doc.sources)) {

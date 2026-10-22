@@ -5,12 +5,27 @@ import { type Limits, resolveLimits } from "../limits.js"
 import { TimestampSchema } from "../schema/primitives.js"
 import { clip } from "../validate/issues.js"
 import type { InverseOp, OpContext } from "./context.js"
+import { removeAttributeDef, setAttributeDef } from "./attribute-ops.js"
+import {
+  addClass,
+  addTag,
+  removeClass,
+  removeTag,
+  reorderClass,
+  reorderTag,
+  updateClass,
+  updateTag,
+} from "./class-ops.js"
+import { createRegions, deleteRegions } from "./bulk-ops.js"
+import { setConfig } from "./config-ops.js"
 import { setDocumentMeta } from "./document-ops.js"
 import { type Charge, Draft } from "./draft.js"
 import { parseOperation } from "./op-schema.js"
 import { createRegion, patchRegion, reorderRegion, setGeometry } from "./region-ops.js"
 import { deleteRegion, moveRegionToSource } from "./region-tree.js"
-import { payloadBudget, snapshot } from "./snapshot.js"
+import { addSkeleton, removeSkeleton, updateSkeleton } from "./skeleton-ops.js"
+import { addSource, removeSource, reorderSource, updateSource } from "./source-ops.js"
+import { RECORD_ENTRY_COST, payloadBudget, recordEntries, snapshot } from "./snapshot.js"
 import type { ApplyOptions, ApplyResult, Batch, Operation, OperationType } from "./types.js"
 import { deriveId } from "./util.js"
 import type { AnnotationDocument, ID } from "../types.js"
@@ -22,11 +37,31 @@ const HANDLERS: {
 } = {
   setDocumentMeta,
   createRegion,
+  createRegions,
   setGeometry,
   patchRegion,
   deleteRegion,
+  deleteRegions,
   reorderRegion,
   moveRegionToSource,
+  setConfig,
+  addClass,
+  updateClass,
+  removeClass,
+  reorderClass,
+  addTag,
+  updateTag,
+  removeTag,
+  reorderTag,
+  setAttributeDef,
+  removeAttributeDef,
+  addSkeleton,
+  updateSkeleton,
+  removeSkeleton,
+  addSource,
+  updateSource,
+  removeSource,
+  reorderSource,
 }
 
 const fail = (code: "INVALID_DOCUMENT" | "LIMIT_EXCEEDED", message: string): never => {
@@ -71,10 +106,11 @@ function workMeter(max: number): Charge {
   }
 }
 
-// One private, parsed copy of an untrusted operation: nothing is read from `raw` afterwards.
+// One private, parsed copy of an untrusted operation: nothing is read from
+// `raw` afterwards. Charged before the schemas run, by what parsing will cost.
 function prepare(ctx: OpContext, raw: unknown): Operation {
   const copy = snapshot(raw, payloadBudget(ctx.limits))
-  ctx.charge(copy.cost)
+  ctx.charge(copy.cost + RECORD_ENTRY_COST * recordEntries(copy.value))
   return parseOperation(copy.value)
 }
 
@@ -121,17 +157,29 @@ function applyAll(ctx: OpContext, view: BatchView): Applied[] {
   return applied
 }
 
+type InverseId = (opId: ID, index: number) => ID
+
+// The caller's id function is untrusted too: a throw or a bad id becomes a typed error.
+function idFor(inverseId: InverseId, opId: ID, index: number): ID {
+  let derived: unknown
+  try {
+    derived = inverseId(opId, index)
+  } catch {
+    fail("INVALID_DOCUMENT", "inverseId failed")
+  }
+  if (typeof derived !== "string" || !ID_PATTERN.test(derived)) {
+    fail("INVALID_DOCUMENT", "inverseId must return a valid id")
+  }
+  return derived as ID
+}
+
 // Undoing means undoing the last operation first.
-function inverseOf(applied: readonly Applied[], inverseId: (opId: ID, index: number) => ID) {
+function inverseOf(applied: readonly Applied[], inverseId: InverseId) {
   const inverse: Operation[] = []
   for (let i = applied.length - 1; i >= 0; i--) {
     const { id, inverse: ops } = applied[i] as Applied
     for (const [k, body] of ops.entries()) {
-      const derived = inverseId(id, k)
-      if (typeof derived !== "string" || !ID_PATTERN.test(derived)) {
-        fail("INVALID_DOCUMENT", "inverseId must return a valid id")
-      }
-      inverse.push({ ...body, id: derived } as Operation)
+      inverse.push({ ...body, id: idFor(inverseId, id, k) } as Operation)
     }
   }
   return inverse
@@ -139,7 +187,7 @@ function inverseOf(applied: readonly Applied[], inverseId: (opId: ID, index: num
 
 function contextFor(doc: AnnotationDocument, at: string, limits: Limits, options: ApplyOptions) {
   const charge = workMeter(limits.maxBatchWork)
-  const draft = new Draft(doc, charge)
+  const draft = new Draft(doc, charge, limits)
   const ctx: OpContext = { draft, at, limits, ignoreRev: options.ignoreRev === true, charge }
   return ctx
 }

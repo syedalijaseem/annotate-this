@@ -1,6 +1,6 @@
 import { type Bounds, boundsWithin, geometryBounds } from "../geometry/bounds.js"
 import type { Limits } from "../limits.js"
-import type { AnnotationDocument, BoxGeometry, Geometry } from "../types.js"
+import type { AnnotationDocument, BoxGeometry, Geometry, Source } from "../types.js"
 import { type Issue, issue, own, pushAll, walkGeometries } from "./issues.js"
 
 /** Slack for coordinates that land a rounding error outside the image. */
@@ -41,15 +41,15 @@ function shapeRules(
   return []
 }
 
-function areaRules(
+/** Geometry must lie within its source and within `area` (the allowed area that applies), if any. */
+export function areaIssues(
   geometry: Geometry,
   path: string,
-  sourceId: string,
-  doc: AnnotationDocument,
+  source: Source,
+  area: BoxGeometry | undefined,
 ): Issue[] {
-  const source = own(doc.sources, sourceId)
   const bounds = geometryBounds(geometry)
-  if (!source || !bounds) return []
+  if (!bounds) return []
   const image: Bounds = { minX: 0, minY: 0, maxX: source.width, maxY: source.height }
   if (!boundsWithin(bounds, image, BOUNDS_TOLERANCE)) {
     return [
@@ -60,11 +60,22 @@ function areaRules(
       ),
     ]
   }
-  const allowed = source.allowedArea ?? doc.config.allowedArea
-  if (allowed && !boundsWithin(bounds, boxBounds(allowed), BOUNDS_TOLERANCE)) {
+  if (area && !boundsWithin(bounds, boxBounds(area), BOUNDS_TOLERANCE)) {
     return [issue("OUT_OF_BOUNDS", path, "Geometry extends outside the allowed area")]
   }
   return []
+}
+
+function areaRules(
+  geometry: Geometry,
+  path: string,
+  sourceId: string,
+  doc: AnnotationDocument,
+): Issue[] {
+  const source = own(doc.sources, sourceId)
+  return source
+    ? areaIssues(geometry, path, source, source.allowedArea ?? doc.config.allowedArea)
+    : []
 }
 
 /** Shape and area rules for one geometry. */

@@ -1,7 +1,8 @@
 import type { AnnotationDocument, Region, Track, VideoSource } from "../types.js"
 import { type Issue, MAX_ISSUES_PER_CHECK, issue, own, pushAll } from "./issues.js"
 
-function sourceRules(id: string, source: VideoSource): Issue[] {
+/** Frame timing of one video source: exactly one of fps or timestamps, and sane timestamps. */
+export function videoSourceIssues(id: string, source: VideoSource): Issue[] {
   const issues: Issue[] = []
   const at = `sources.${id}`
   const hasFps = source.fps !== undefined
@@ -82,7 +83,7 @@ function regionFrameRules(doc: AnnotationDocument): Issue[] {
 export function checkVideo(doc: AnnotationDocument): Issue[] {
   const issues: Issue[] = regionFrameRules(doc)
   for (const [id, source] of Object.entries(doc.sources)) {
-    if (source.kind === "video") pushAll(issues, sourceRules(id, source))
+    if (source.kind === "video") pushAll(issues, videoSourceIssues(id, source))
   }
   for (const [id, track] of Object.entries(doc.tracks)) {
     const source = own(doc.sources, track.sourceId)
