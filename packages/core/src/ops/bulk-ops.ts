@@ -15,7 +15,7 @@ function parseAll(ctx: OpContext, payloads: readonly unknown[]): Region[] {
   // Local working set, filled in place.
   const ids = new Set<ID>()
   return payloads.map((payload) => {
-    const region = parseNewRegion(ctx, payload)
+    const region = parseNewRegion(ctx, payload, false)
     assertUsableId(ctx, region.id)
     if (ids.has(region.id)) {
       throw new AnnotateError("DUPLICATE_ID", `Id "${clip(region.id)}" is listed twice`)

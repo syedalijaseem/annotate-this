@@ -3,17 +3,14 @@ import type { Limits } from "../limits.js"
 import { type InputBudget, STRUCTURE_DEPTH_ALLOWANCE, isPlainContainer } from "../validate/depth.js"
 
 type Container = unknown[] | Record<string, unknown>
+type Charge = (units: number) => void
 
 interface Pending {
   source: object
   target: Container
   depth: number
-}
-
-export interface Snapshot {
-  value: unknown
-  // Values visited (numbers included), for the batch work budget.
-  cost: number
+  // Inside a free-form record (meta, attributes, custom geometry data).
+  record: boolean
 }
 
 const invalid = (message: string): AnnotateError =>
@@ -29,6 +26,19 @@ export const payloadBudget = (limits: Limits): InputBudget => ({
   entries: limits.maxEntries,
 })
 
+// Work units (Limits.maxBatchWork, about 40 ns each) per value copied. Values
+// inside free-form records are copied, parsed and measured again when stored:
+// measured end to end, a key costs about 0.6 µs and an array element about
+// 0.1 µs. Objects with many keys are kept as hash tables by the engine, which
+// makes every key about three times slower (about 1.8 µs).
+export const RECORD_KEY_COST = 16
+export const RECORD_ELEMENT_COST = 3
+export const LARGE_OBJECT_KEY_COST = 48
+const LARGE_OBJECT_KEYS = 1024
+
+// Fields whose values are free-form records, wherever they appear in a payload.
+const RECORD_FIELDS: ReadonlySet<string> = new Set(["meta", "attributes", "data"])
+
 // Assigns without invoking the `__proto__` setter, so such a key stays visible to the schemas.
 function define(target: Record<string, unknown>, key: string, value: unknown): void {
   if (key === "__proto__") {
@@ -41,16 +51,20 @@ function define(target: Record<string, unknown>, key: string, value: unknown): v
   } else target[key] = value
 }
 
-// Counts like findBudgetBreach: containers, keys and non-number values are nodes.
+// Copies plain JSON, counting nodes like findBudgetBreach (containers, keys
+// and non-number values) and charging the work budget for each container
+// before reading it, so an oversized payload stops early.
 class Walker {
   private readonly stack: Pending[] = []
   private nodes = 0
-  cost = 1
 
-  constructor(private readonly budget: InputBudget) {}
+  constructor(
+    private readonly budget: InputBudget,
+    private readonly charge: Charge,
+  ) {}
 
-  copy(value: unknown, depth: number): unknown {
-    if (typeof value === "object" && value !== null) return this.enqueue(value, depth)
+  copy(value: unknown, depth: number, record: boolean): unknown {
+    if (typeof value === "object" && value !== null) return this.enqueue(value, depth, record)
     if (value === null || typeof value === "string" || typeof value === "boolean") {
       this.count(1)
       return value
@@ -65,40 +79,49 @@ class Walker {
   run(): void {
     for (let next = this.stack.pop(); next; next = this.stack.pop()) {
       this.count(1)
-      if (Array.isArray(next.target))
-        this.copyArray(next.source as unknown[], next.target, next.depth)
-      else this.copyObject(next.source, next.target, next.depth)
+      this.charge(1)
+      if (Array.isArray(next.target)) this.copyArray(next as Pending & { target: unknown[] })
+      else this.copyObject(next)
     }
   }
 
-  private enqueue(source: object, depth: number): Container {
+  private enqueue(source: object, depth: number, record: boolean): Container {
     if (depth > this.budget.depth) throw tooBig("payload is nested too deep")
     if (!isPlainContainer(source)) throw invalid("payload must be plain JSON")
     const target: Container = Array.isArray(source) ? [] : {}
-    this.stack.push({ source, target, depth })
+    this.stack.push({ source, target, depth, record })
     return target
   }
 
-  private copyArray(source: unknown[], target: unknown[], depth: number): void {
-    const length = source.length
-    this.cost += length
+  private copyArray({ source, target, depth, record }: Pending & { target: unknown[] }): void {
+    const items = source as unknown[]
+    const length = items.length
+    this.charge(length * (record ? RECORD_ELEMENT_COST : 1))
     for (let i = 0; i < length; i++) {
-      const child = source[i]
+      const child = items[i]
       if (child === undefined) throw invalid("arrays must not contain undefined")
-      target.push(this.copy(child, depth + 1))
+      target.push(this.copy(child, depth + 1, record))
     }
   }
 
-  private copyObject(source: object, target: Record<string, unknown>, depth: number): void {
+  private copyObject({ source, target, depth, record }: Pending): void {
     const keys = Object.keys(source)
     if (keys.length > this.budget.entries) {
       throw tooBig(`an object has more than ${this.budget.entries} keys`)
     }
     this.count(keys.length)
-    this.cost += keys.length
-    for (const key of keys) {
-      const child = (source as Record<string, unknown>)[key]
-      if (child !== undefined) define(target, key, this.copy(child, depth + 1))
+    const keyCost =
+      keys.length > LARGE_OBJECT_KEYS ? LARGE_OBJECT_KEY_COST : record ? RECORD_KEY_COST : 1
+    this.charge(keys.length * keyCost)
+    // Each property is read once, before deciding how its value is charged.
+    const values = keys.map((key) => (source as Record<string, unknown>)[key])
+    // setDocumentMeta's patch is a record itself.
+    const metaPatch = depth === 1 && values[keys.indexOf("type")] === "setDocumentMeta"
+    for (const [i, key] of keys.entries()) {
+      const child = values[i]
+      const isRecord = record || RECORD_FIELDS.has(key) || (metaPatch && key === "patch")
+      if (child !== undefined)
+        define(target as Record<string, unknown>, key, this.copy(child, depth + 1, isRecord))
     }
   }
 
@@ -108,67 +131,16 @@ class Walker {
   }
 }
 
-// Takes one plain-JSON copy of an untrusted operation payload. Every property
-// is read exactly once (getters and proxies cannot change their answer
-// between checks), and the walk enforces the document input budget as it
-// goes, so it is iterative, bounded and terminates on cyclic input. Object
-// properties that are `undefined` are dropped (TypeScript callers write
-// `{ position: undefined }`); `undefined` inside an array is rejected.
-export function snapshot(value: unknown, budget: InputBudget): Snapshot {
-  const walker = new Walker(budget)
-  const copied = walker.copy(value, 1)
+// Takes one plain-JSON copy of an untrusted operation payload, charging
+// `charge` as it goes. Every property is read exactly once (getters and
+// proxies cannot change their answer between checks), and the walk enforces
+// the document input budget as it goes, so it is iterative, bounded and
+// terminates on cyclic input. Object properties that are `undefined` are
+// dropped (TypeScript callers write `{ position: undefined }`); `undefined`
+// inside an array is rejected.
+export function snapshot(value: unknown, budget: InputBudget, charge: Charge): unknown {
+  const walker = new Walker(budget, charge)
+  const copied = walker.copy(value, 1, false)
   walker.run()
-  return { value: copied, cost: walker.cost }
-}
-
-// Work units per entry of a free-form record (meta, attributes, custom
-// geometry data and anything nested in them). The schemas parse such an entry
-// in about 2 µs, against roughly 0.15 µs per unit for the rest of an
-// operation, so charging only the copy would let one batch run for minutes.
-export const RECORD_ENTRY_COST = 16
-
-const objectAt = (value: unknown, key: string): Record<string, unknown> | undefined => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
-  const child = (value as Record<string, unknown>)[key]
-  return typeof child === "object" && child !== null
-    ? (child as Record<string, unknown>)
-    : undefined
-}
-
-// The free-form values of an entity or patch payload.
-const recordsOf = (entity: unknown): unknown[] => [
-  objectAt(entity, "meta"),
-  objectAt(entity, "attributes"),
-  objectAt(objectAt(entity, "geometry"), "data"),
-]
-
-// Keys of every object inside `roots`. Iterative; the input is an acyclic snapshot.
-function countKeys(roots: unknown[]): number {
-  let keys = 0
-  const stack = roots.filter((root) => typeof root === "object" && root !== null) as object[]
-  for (let current = stack.pop(); current !== undefined; current = stack.pop()) {
-    const children: unknown[] = Array.isArray(current) ? current : Object.values(current)
-    if (!Array.isArray(current)) keys += children.length
-    for (const child of children) {
-      if (typeof child === "object" && child !== null) stack.push(child)
-    }
-  }
-  return keys
-}
-
-// Free-form record entries in an operation snapshot, before its schemas run.
-export function recordEntries(op: unknown): number {
-  if (typeof op !== "object" || op === null) return 0
-  const fields = op as Record<string, unknown>
-  if (fields["type"] === "setDocumentMeta") return countKeys([fields["patch"]])
-  const roots = [
-    ...recordsOf(fields["region"]),
-    ...recordsOf(fields["source"]),
-    ...recordsOf(fields["def"]),
-    ...recordsOf(fields["patch"]),
-    objectAt(fields["geometry"], "data"),
-  ]
-  const regions = fields["regions"]
-  if (Array.isArray(regions)) for (const region of regions) roots.push(...recordsOf(region))
-  return countKeys(roots)
+  return copied
 }

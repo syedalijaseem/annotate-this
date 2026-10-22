@@ -23,9 +23,16 @@ export class SizeMeter {
 
   // `before` was replaced by `after` (ZERO for an addition or removal).
   change(before: Size, after: Size): void {
-    this.charge(before.nodes + after.nodes)
+    // Measuring walks every value and scans every string (about 8 bytes per unit).
+    this.charge(before.nodes + after.nodes + ((before.bytes + after.bytes) >>> 3))
     this.delta = plus(this.delta, minus(after, before))
     if (after.nodes > before.nodes || after.bytes > before.bytes) this.assertFits()
+  }
+
+  // A number (a rev) changed in place: only its digits can change the size.
+  renumber(before: number, after: number): void {
+    const bytes = String(after).length - String(before).length
+    if (bytes !== 0) this.change(ZERO, { nodes: 0, bytes })
   }
 
   // Records the committed document's size for the next batch, when it is known.

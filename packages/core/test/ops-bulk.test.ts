@@ -8,6 +8,7 @@ import {
   codeOf,
   manyRegions,
   opId,
+  random,
   reload,
   richDocument,
   roundTrip,
@@ -130,11 +131,7 @@ describe("createRegions", () => {
   })
 
   it("places regions exactly as one createRegion per entry would", () => {
-    let seed = 17
-    const rand = () => {
-      seed = (seed * 1103515245 + 12345) % 2 ** 31
-      return seed / 2 ** 31
-    }
+    const rand = random(17)
     const survivors = order(base) ?? []
     for (let trial = 0; trial < 40; trial++) {
       const regions = Array.from({ length: 6 }, (_, i) => box(`n${i}`))

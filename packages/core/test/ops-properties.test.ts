@@ -5,18 +5,7 @@ import type { Operation, Position } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { parseDocument } from "../src/validate/index.js"
 import { type Loose, box, clone, validDocument } from "./fixtures.js"
-
-/** Small deterministic PRNG (mulberry32), so a failing seed can be replayed. */
-function random(seed: number): () => number {
-  let state = seed >>> 0
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0
-    let t = state
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
+import { random } from "./ops-helpers.js"
 
 const pick = <T>(rand: () => number, items: readonly T[]): T =>
   items[Math.floor(rand() * items.length)] as T

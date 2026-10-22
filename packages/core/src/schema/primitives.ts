@@ -1,18 +1,16 @@
 import {
   type GenericSchema,
-  array,
   boolean,
   finite,
   integer,
   isoTimestamp,
-  lazy,
   maxLength,
   maxValue,
   minValue,
-  null as nullSchema,
   number,
   pipe,
   rawCheck,
+  rawTransform,
   record,
   regex,
   string,
@@ -110,35 +108,97 @@ export function safeRecord<V>(
   )
 }
 
-/** A record of free-form JSON: any key text is fine except the forbidden ones. */
-function jsonRecord<V>(
-  value: GenericSchema<unknown, V>,
-): GenericSchema<unknown, Record<string, V>> {
+/** Deepest free-form JSON the copy below accepts; the configurable depth limits are far lower. */
+const MAX_JSON_DEPTH = 10_000
+
+const isJsonScalar = (value: unknown): boolean =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value))
+
+type JsonContainer = JSONValue[] | { [key: string]: JSONValue }
+
+interface JsonPending {
+  source: object
+  target: JsonContainer
+  depth: number
+}
+
+/** Queues a container child and returns its empty copy, or an error message. */
+function containerCopy(child: object, depth: number, stack: JsonPending[]): JsonContainer | string {
+  if (depth > MAX_JSON_DEPTH) return "Nesting is too deep"
+  const target: JsonContainer = Array.isArray(child) ? [] : Object.create(null)
+  stack.push({ source: child, target, depth })
+  return target
+}
+
+/** The copy of one member value, or an error message. */
+function memberCopy(
+  value: unknown,
+  depth: number,
+  stack: JsonPending[],
+): { copy: unknown } | string {
+  if (isJsonScalar(value)) return { copy: value }
+  if (typeof value !== "object" || value === null) return "Expected a JSON value"
+  const copy = containerCopy(value, depth + 1, stack)
+  return typeof copy === "string" ? copy : { copy }
+}
+
+/** Copies one container's members; returns an error message for a forbidden key or non-JSON value. */
+function copyMembers({ source, target, depth }: JsonPending, stack: JsonPending[]): string | null {
+  if (Array.isArray(source)) {
+    for (const value of source as unknown[]) {
+      const member = memberCopy(value, depth, stack)
+      if (typeof member === "string") return member
+      ;(target as unknown[]).push(member.copy)
+    }
+    return null
+  }
+  for (const key of Object.keys(source)) {
+    if (FORBIDDEN_KEYS.has(key)) return `Forbidden key "${key}"`
+    const member = memberCopy((source as Record<string, unknown>)[key], depth, stack)
+    if (typeof member === "string") return member
+    ;(target as Record<string, unknown>)[key] = member.copy
+  }
+  return null
+}
+
+/**
+ * Validates free-form JSON and copies it with null-prototype records. Iterative
+ * and schema-free: valibot's record() costs about 2 µs per key, this a fraction.
+ * Forbidden keys (prototype pollution) are reported, like safeRecord does.
+ */
+function copyJson(input: unknown, objectOnly: boolean): { value: JSONValue } | { error: string } {
+  if (objectOnly && (typeof input !== "object" || input === null || Array.isArray(input))) {
+    return { error: "Expected an object" }
+  }
+  const stack: JsonPending[] = []
+  const root = memberCopy(input, 0, stack)
+  if (typeof root === "string") return { error: root }
+  for (let next = stack.pop(); next; next = stack.pop()) {
+    const error = copyMembers(next, stack)
+    if (error !== null) return { error }
+  }
+  return { value: root.copy as JSONValue }
+}
+
+function jsonSchema<T extends JSONValue>(objectOnly: boolean): GenericSchema<unknown, T> {
   return pipe(
     unknown(),
-    rejectForbiddenKeys(),
-    record(string(), value),
-    transform(withoutPrototype),
+    rawTransform(({ dataset, addIssue, NEVER }) => {
+      const result = copyJson(dataset.value, objectOnly)
+      if ("error" in result) {
+        addIssue({ message: result.error })
+        return NEVER
+      }
+      return result.value as T
+    }),
   )
 }
 
-const JsonScalarSchema = union([string(), NumSchema, boolean(), nullSchema()])
-const JsonArraySchema = array(lazy(() => JsonValueSchema))
-const JsonObjectSchema = jsonRecord(lazy(() => JsonValueSchema))
-
-/**
- * Picks one branch from the input's type. A plain union would try every branch
- * on every level, and an array also passes record()'s object check, so a bad
- * leaf nested n levels deep would cost 2^n work.
- */
-const JsonValueSchema: GenericSchema<unknown, JSONValue> = lazy((input) => {
-  if (Array.isArray(input)) return JsonArraySchema
-  if (typeof input === "object" && input !== null) return JsonObjectSchema
-  return JsonScalarSchema
-})
-
-export const MetaSchema = jsonRecord(JsonValueSchema)
-export const JsonSchema = JsonValueSchema
+export const MetaSchema: GenericSchema<unknown, Record<string, JSONValue>> = jsonSchema(true)
+export const JsonSchema: GenericSchema<unknown, JSONValue> = jsonSchema(false)
 
 export const AttributeValueSchema: GenericSchema<unknown, AttributeValue> = union([
   TextSchema,

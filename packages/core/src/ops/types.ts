@@ -67,7 +67,8 @@ export interface SetDocumentMetaOp extends OperationBase {
 /**
  * Adds a region to its source. A creation has no existing primary target, so
  * `baseRev` is ignored (as for `addSource`; config creations such as
- * `addClass` check it against the config).
+ * `addClass` check it against the config). `provenance.updatedAt` is set to
+ * the batch time.
  */
 export interface CreateRegionOp extends OperationBase {
   type: "createRegion"
@@ -101,7 +102,9 @@ export interface DeleteRegionOp extends OperationBase {
  * list, and parent loops within the list fail with `CYCLE`. Regions may
  * belong to different sources. Inverses use it to restore many regions at
  * once in linear time (`removeSource`, subtree deletes); any caller may use
- * it. `baseRev` is ignored, as for `createRegion`.
+ * it. `baseRev` is ignored, as for `createRegion`. Unlike `createRegion`, it
+ * does not stamp `provenance.updatedAt`: provenance is stored exactly as
+ * given, so a restore brings back the regions as they were.
  */
 export interface CreateRegionsOp extends OperationBase {
   type: "createRegions"
@@ -373,6 +376,11 @@ export interface ChangeSet {
   deleted: ID[]
 }
 
+/**
+ * The documents in a result are immutable values: they share structure with
+ * the input and `apply` remembers facts about them (such as their size) for
+ * the next batch, so they must not be mutated.
+ */
 export interface ApplyResult {
   doc: AnnotationDocument
   changes: ChangeSet

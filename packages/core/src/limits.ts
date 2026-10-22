@@ -12,21 +12,34 @@ export interface Limits {
   maxCommentLength: number
   /** Maximum nesting depth of `meta` JSON. */
   maxMetaDepth: number
-  /** Maximum serialized document size in bytes (checked on JSON text input). */
+  /**
+   * Maximum serialized document size in bytes: the UTF-8 size of the JSON text
+   * for parseDocumentJson, and the exact compact `JSON.stringify` size of every
+   * document `apply` returns.
+   */
   maxDocumentBytes: number
   /** Maximum decoded pixels of any single mask. */
   maxMaskPixels: number
-  /** Maximum operations in one batch. */
+  /**
+   * Maximum operations in one batch, and so in the inverse `apply` returns (an
+   * operation whose undo would need more fails with LIMIT_EXCEEDED). Bulk
+   * operations (`createRegions`, `deleteRegions`) restore or remove any number
+   * of regions in one operation, so large deletes stay undoable; they are still
+   * bounded by maxAnnotations, maxDocumentNodes, maxDocumentBytes and maxBatchWork.
+   */
   maxBatchOps: number
   /** Maximum values in the whole input (strings, booleans, null, objects, arrays and keys; plain numbers are free). */
   maxDocumentNodes: number
   /** Maximum keys in any one object, and so the largest record the document can hold. */
   maxEntries: number
   /**
-   * Maximum work units one `apply` batch may spend. A unit is roughly one
-   * payload value copied, one map entry merged, one vertex re-validated or 16
-   * entries of an ordering scanned. Bounds the total cost of a hostile or
-   * accidental batch (for example 50,000 reorders of a 50,000-region source).
+   * Maximum work units one `apply` batch may spend. Each step is charged by
+   * its measured cost at about 40 ns of engine time per unit, so the default
+   * bounds a batch to roughly 2 s on a current laptop: for example one unit per
+   * ordering entry compared or payload value copied, 16 per free-form record
+   * key, 16 per parent-chain step and 32 per annotation a whole-document scan
+   * visits. Bounds the total cost of a hostile or accidental batch (for
+   * example 50,000 reorders of a 50,000-region source).
    */
   maxBatchWork: number
 }

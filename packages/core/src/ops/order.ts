@@ -4,8 +4,9 @@ import { clip } from "../validate/issues.js"
 import type { Charge } from "./draft.js"
 import type { Position } from "./types.js"
 
-// Work units (Limits.maxBatchWork): a scan costs one unit per entry compared
-// (ids are compared by content), a splice one unit per 32 entries shifted.
+// Work units (Limits.maxBatchWork, about 40 ns each): a scan costs one unit per
+// entry compared (ids are compared by content), a splice one unit per 32
+// entries shifted (a native memory move).
 const SHIFTS_PER_UNIT_LOG2 = 5
 
 // Orders hold region, source, class or tag ids; messages name the entry, not its kind.

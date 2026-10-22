@@ -3,7 +3,15 @@ import type { AnnotationDocument, Config, ID, Meta, Region, Source } from "../ty
 import { RESERVED_ID } from "../validate/identity.js"
 import { own, walkGeometries } from "../validate/issues.js"
 import { type DefKind, geometryWeight } from "../validate/limit-checks.js"
-import { ZERO, configShellSize, defSize, metaSize, regionSize, sourceSize } from "./doc-size.js"
+import {
+  EMPTY_CONTAINER_BYTES,
+  ZERO,
+  configShellSize,
+  defSize,
+  metaSize,
+  regionSize,
+  sourceSize,
+} from "./doc-size.js"
 import { SizeMeter } from "./size-meter.js"
 import type { ChangeSet } from "./types.js"
 import { deepEqual } from "./util.js"
@@ -58,6 +66,10 @@ export class Draft {
   // with, so later operations of the batch do not bump them.
   private readonly bornSources = new Set<ID>()
   private readonly meter: SizeMeter
+  // Regions per source, kept from the batch start on: they tell the meter when
+  // a region order empties or fills (its last comma).
+  private readonly orderSizes = new Map<ID, number>()
+  private sourceCount: number
   // Whether the current operation changed the config; it gets one rev bump in endOp().
   private opConfig = false
   // Entry counts of config records, computed on first use.
@@ -76,6 +88,7 @@ export class Draft {
     limits: Limits,
   ) {
     this.meter = new SizeMeter(original, limits, charge)
+    this.sourceCount = original.sourceOrder.length
     this.doc = { ...original }
     this.trackCount = Object.keys(original.tracks).length
     this.annotationCount = Object.keys(original.regions).length + this.trackCount
@@ -158,8 +171,13 @@ export class Draft {
       this.markUpdated(region.id)
       this.unlink(region.id, previous.parentId)
     } else {
+      this.occupy(this.regionCount, this.regionCount + 1, 1)
       this.annotationCount += 1
       this.markCreated(region.id)
+    }
+    if (previous?.sourceId !== region.sourceId) {
+      if (previous) this.addToOrder(previous.sourceId, -1)
+      this.addToOrder(region.sourceId, 1)
     }
     this.link(region.id, region.parentId)
   }
@@ -172,6 +190,8 @@ export class Draft {
     Reflect.deleteProperty(this.doc.regions, id)
     this.meter.change(regionSize(previous), ZERO)
     this.countVertices(previous, undefined)
+    this.occupy(this.regionCount, this.regionCount - 1, 1)
+    this.addToOrder(previous.sourceId, -1)
     this.annotationCount -= 1
     this.unlink(id, previous.parentId)
     this.deletedRevs.set(id, previous.rev)
@@ -203,8 +223,13 @@ export class Draft {
   // touchSource() so that endOp() bumps it once.
   putSource(source: Source): void {
     const previous = this.source(source.id)
-    if (!previous) this.bornSources.add(source.id)
     this.meter.change(previous ? sourceSize(previous) : ZERO, sourceSize(source))
+    if (!previous) {
+      this.bornSources.add(source.id)
+      // The sources record and sourceOrder.
+      this.occupy(this.sourceCount, this.sourceCount + 1, 2)
+      this.sourceCount += 1
+    }
     this.storeSource(source)
   }
 
@@ -219,6 +244,8 @@ export class Draft {
     // Safe in place: ownSources() made this record a private copy.
     Reflect.deleteProperty(this.doc.sources, id)
     this.meter.change(sourceSize(previous), ZERO)
+    this.occupy(this.sourceCount, this.sourceCount - 1, 2)
+    this.sourceCount -= 1
     this.bornSources.delete(id)
     this.opSources.delete(id)
     this.ownedOrders.delete(id)
@@ -256,7 +283,10 @@ export class Draft {
     const ordered = isOrdered(kind)
     this.meter.change(previous ? defSize(key, previous, ordered) : ZERO, defSize(key, def, ordered))
     const record = this.configPart(kind) as Record<string, Def<K>>
-    if (!previous) this.sizes.set(kind, count + 1)
+    if (!previous) {
+      this.occupy(count, count + 1, ordered ? 2 : 1)
+      this.sizes.set(kind, count + 1)
+    }
     record[key] = def
   }
 
@@ -264,6 +294,7 @@ export class Draft {
     const count = this.defCount(kind)
     const previous = this.def(kind, key)
     if (previous) this.meter.change(defSize(key, previous, isOrdered(kind)), ZERO)
+    this.occupy(count, count - 1, isOrdered(kind) ? 2 : 1)
     Reflect.deleteProperty(this.configPart(kind), key)
     this.sizes.set(kind, count - 1)
   }
@@ -281,11 +312,13 @@ export class Draft {
     for (const id of this.opSources) {
       if (this.bornSources.has(id)) continue
       const source = this.source(id) as Source
+      this.meter.renumber(source.rev, source.rev + 1)
       this.storeSource({ ...source, rev: source.rev + 1 })
     }
     this.opSources.clear()
     if (this.opConfig) {
       const { config } = this.doc
+      this.meter.renumber(config.rev, config.rev + 1)
       this.doc = { ...this.doc, config: { ...config, rev: config.rev + 1 } }
       this.markUpdated(CONFIG)
       this.opConfig = false
@@ -312,6 +345,7 @@ export class Draft {
       return { doc: this.original, changes: { created: [], updated: [], deleted: [] } }
     }
     this.markUpdated(this.doc.id)
+    this.meter.renumber(this.original.rev, this.original.rev + 1)
     const doc = { ...this.doc, rev: this.original.rev + 1 }
     this.meter.commit(doc)
     return {
@@ -343,6 +377,25 @@ export class Draft {
       this.ownedParts.add(key)
     }
     return config[key]
+  }
+
+  // `containers` records or orders went from `before` to `after` entries: a
+  // container that holds entries has one comma fewer than its entries count.
+  private occupy(before: number, after: number, containers: number): void {
+    const filled = (after > 0 ? 1 : 0) - (before > 0 ? 1 : 0)
+    if (filled === 0) return
+    const bytes = filled * containers * EMPTY_CONTAINER_BYTES
+    this.meter.change(
+      { nodes: 0, bytes: Math.max(bytes, 0) },
+      { nodes: 0, bytes: Math.max(-bytes, 0) },
+    )
+  }
+
+  private addToOrder(sourceId: ID, delta: number): void {
+    const before =
+      this.orderSizes.get(sourceId) ?? own(this.original.sources, sourceId)?.regionOrder.length ?? 0
+    this.orderSizes.set(sourceId, before + delta)
+    this.occupy(before, before + delta, 1)
   }
 
   private countVertices(previous: Region | undefined, next: Region | undefined): void {

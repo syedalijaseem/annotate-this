@@ -2,22 +2,11 @@ import { afterAll, describe, expect, it } from "vitest"
 import { isAnnotateError } from "../src/errors.js"
 import { apply } from "../src/ops/apply.js"
 import { knownSize, measure } from "../src/ops/doc-size.js"
+import { utf8ByteLength } from "../src/validate/json.js"
 import type { Operation, Position } from "../src/ops/types.js"
 import type { AnnotationDocument } from "../src/types.js"
 import { box } from "./fixtures.js"
-import { AT, reload, richDocument, stable } from "./ops-helpers.js"
-
-/** Small deterministic PRNG (mulberry32), so a failing seed can be replayed. */
-function random(seed: number): () => number {
-  let state = seed >>> 0
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0
-    let t = state
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
+import { AT, random, reload, richDocument, stable } from "./ops-helpers.js"
 
 type Rand = () => number
 type Body = Record<string, unknown>
@@ -189,6 +178,7 @@ function createRegionsOp(rand: Rand, doc: AnnotationDocument, n: number): Body {
   const sourceId = some(rand, doc.sources)
   const regions = Array.from({ length: 1 + Math.floor(rand() * 4) }, (_, k) => {
     const region: Body = { ...box(`n${n}x${k}`, rand() < 0.8 ? sourceId : some(rand, doc.sources)) }
+    if (rand() < 0.3) region["meta"] = { "a:é\u0001": ["😀\n", -1.25e-7, rand() * 1e9, null] }
     if (rand() < 0.3) region["parentId"] = rand() < 0.5 ? `n${n}x0` : some(rand, doc.regions)
     return region
   })
@@ -285,10 +275,12 @@ const NEW_TYPES = [
   "deleteRegions",
 ]
 
-// The size apply carries from batch to batch must match a fresh walk.
+// The size apply carries from batch to batch must match a fresh walk and the serialized size.
 function expectKnownSize(doc: AnnotationDocument): void {
   const size = knownSize(doc)
-  if (size) expect(size).toEqual(measure(doc))
+  if (!size) return
+  expect(size).toEqual(measure(doc))
+  expect(size.bytes).toBe(utf8ByteLength(JSON.stringify(doc)))
 }
 
 describe("random config, source and region batches (Spec 0002 property obligations)", () => {

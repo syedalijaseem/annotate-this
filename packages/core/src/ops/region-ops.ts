@@ -45,15 +45,17 @@ export function assertRoom(ctx: OpContext, count: number): void {
   }
 }
 
-// A createRegion payload as it will be stored: rev defaults to 0 (continued
-// past a delete earlier in the batch) and updatedAt is the batch time.
-export function parseNewRegion(ctx: OpContext, input: unknown): Region {
+// A new region's payload as it will be stored: rev defaults to 0 (continued
+// past a delete earlier in the batch). createRegion stamps updatedAt with the
+// batch time; createRegions (`stamp` false) keeps provenance exactly as given.
+export function parseNewRegion(ctx: OpContext, input: unknown, stamp = true): Region {
   const payload = input as Record<string, unknown>
   assertDepth(payload, ctx.limits, REGION_LEVEL, "region")
+  const provenance = payload["provenance"]
   const parsed = parseRegion({
     ...payload,
     rev: payload["rev"] ?? 0,
-    provenance: { ...(payload["provenance"] as object), updatedAt: ctx.at },
+    ...(stamp ? { provenance: { ...(provenance as object), updatedAt: ctx.at } } : {}),
   })
   return continuedRev(ctx.draft, parsed)
 }

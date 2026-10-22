@@ -15,8 +15,9 @@ import {
 import type { ChildPolicy, DeleteRegionOp, MoveRegionToSourceOp } from "./types.js"
 import { without } from "./util.js"
 
-// Work units per parent-chain step (a record lookup).
-const CHAIN_STEP_COST = 2
+// Work units per parent-chain step: a lookup in a large record, about 0.25 µs
+// standalone and up to twice that under load.
+const CHAIN_STEP_COST = 16
 
 // Walks the parent chain from `parentId` (one `parentOf` lookup per step);
 // reaching `id` means the new link would close a loop. An acyclic chain has
@@ -93,6 +94,20 @@ function bySource(ctx: OpContext, doomed: readonly ID[]): Map<ID, Region[]> {
   return groups
 }
 
+// Every region of a source goes: restoring them bottom to top needs no positions,
+// which keeps the undo payload no larger than what it restores.
+function emptySource(ctx: OpContext, order: ID[], group: readonly Region[]): InverseOp {
+  ctx.charge(order.length)
+  const regions = order.map((id): Region => {
+    const region = needRegion(ctx, id)
+    return { ...region, rev: region.rev + 1 }
+  })
+  // Safe in place: regionOrder() returned the draft's own copy.
+  order.length = 0
+  for (const region of group) ctx.draft.removeRegion(region.id)
+  return { type: "createRegions", regions }
+}
+
 // Removes one source's doomed regions; returns the step that re-creates them in place.
 function removeFromSource(
   ctx: OpContext,
@@ -101,11 +116,13 @@ function removeFromSource(
   single: boolean,
 ): InverseOp {
   const { draft } = ctx
+  const order = draft.regionOrder(sourceId)
+  if (!single && group.length === order.length) return emptySource(ctx, order, group)
   // Undoing re-inserts in reverse removal order, so remove the last-listed first.
   const removal = [...group].reverse()
   const positions = removeEntries(
     ctx.charge,
-    draft.regionOrder(sourceId),
+    order,
     removal.map((r) => r.id),
   )
   for (const region of removal) draft.removeRegion(region.id)

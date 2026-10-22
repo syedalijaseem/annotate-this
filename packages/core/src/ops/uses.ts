@@ -16,9 +16,9 @@ export interface Uses {
   sources: Source[]
 }
 
-// Work units per entity a whole-document scan visits. Measured at about 0.4 µs
-// per region on a 50,000-region document, so that a batch of scans (config
-// toggles) runs out of budget within about a second.
+// Work units (about 40 ns each, see Limits.maxBatchWork) per entity a
+// whole-document scan visits: measured at about 0.4 µs per region on a
+// 50,000-region document, charged with a 3x margin for the predicates.
 export const SCAN_COST = 32
 
 // Every region, track and (unless `withSources` is false) source that `test`

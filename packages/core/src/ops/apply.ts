@@ -25,7 +25,7 @@ import { createRegion, patchRegion, reorderRegion, setGeometry } from "./region-
 import { deleteRegion, moveRegionToSource } from "./region-tree.js"
 import { addSkeleton, removeSkeleton, updateSkeleton } from "./skeleton-ops.js"
 import { addSource, removeSource, reorderSource, updateSource } from "./source-ops.js"
-import { RECORD_ENTRY_COST, payloadBudget, recordEntries, snapshot } from "./snapshot.js"
+import { payloadBudget, snapshot } from "./snapshot.js"
 import type { ApplyOptions, ApplyResult, Batch, Operation, OperationType } from "./types.js"
 import { deriveId } from "./util.js"
 import type { AnnotationDocument, ID } from "../types.js"
@@ -107,11 +107,9 @@ function workMeter(max: number): Charge {
 }
 
 // One private, parsed copy of an untrusted operation: nothing is read from
-// `raw` afterwards. Charged before the schemas run, by what parsing will cost.
+// `raw` afterwards. The copy is charged while it is taken, by what parsing will cost.
 function prepare(ctx: OpContext, raw: unknown): Operation {
-  const copy = snapshot(raw, payloadBudget(ctx.limits))
-  ctx.charge(copy.cost + RECORD_ENTRY_COST * recordEntries(copy.value))
-  return parseOperation(copy.value)
+  return parseOperation(snapshot(raw, payloadBudget(ctx.limits), ctx.charge))
 }
 
 function runOperation(ctx: OpContext, op: Operation): InverseOp[] {
@@ -137,9 +135,22 @@ interface Applied {
   inverse: InverseOp[]
 }
 
+// The inverse is applied as one batch, so it must fit in maxBatchOps as well.
+// Bulk restores (createRegions, deleteRegions) keep large undos to a few operations.
+function assertUndoable(inverseOps: number, limits: Limits): void {
+  if (inverseOps > limits.maxBatchOps) {
+    fail(
+      "LIMIT_EXCEEDED",
+      `operation: undo would need more than ${limits.maxBatchOps} operations; ` +
+        "detach in smaller batches or raise maxBatchOps",
+    )
+  }
+}
+
 function applyAll(ctx: OpContext, view: BatchView): Applied[] {
   const seen = new Set<string>()
   const applied: Applied[] = []
+  let inverseOps = 0
   for (let opIndex = 0; opIndex < view.length; opIndex++) {
     let opId: ID | undefined
     try {
@@ -149,7 +160,10 @@ function applyAll(ctx: OpContext, view: BatchView): Applied[] {
         fail("INVALID_DOCUMENT", `operation: id "${clip(op.id)}" is used twice in the batch`)
       }
       seen.add(op.id)
-      applied.push({ id: op.id, inverse: runOperation(ctx, op) })
+      const inverse = runOperation(ctx, op)
+      inverseOps += inverse.length
+      assertUndoable(inverseOps, ctx.limits)
+      applied.push({ id: op.id, inverse })
     } catch (error) {
       throw located(error, opIndex, opId)
     }
@@ -201,6 +215,13 @@ function contextFor(doc: AnnotationDocument, at: string, limits: Limits, options
  * schema-parsed before use. A batch that changes nothing returns the same
  * document, no changes and no inverse. Idempotency windows and undo stacks
  * belong to the store.
+ *
+ * Documents are treated as immutable values: neither `doc` nor any document
+ * `apply` returns may be mutated afterwards. Results share structure with
+ * their input, and `apply` remembers each result's size so the next batch can
+ * check the document limits without walking it again; mutating a document
+ * would make those checks wrong. Copy a document (for example with
+ * structuredClone) before editing it by hand.
  */
 export function apply(
   doc: AnnotationDocument,
